@@ -27,6 +27,29 @@ For a fast local compile:
 dotnet build -c Release
 ```
 
+## Releases
+
+The version is defined in `DirSizer.csproj`. To build and package the current
+version without publishing it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1
+```
+
+This creates `dist\DirSizer-v<version>-win-x64.zip` containing the NativeAOT
+executable and this README. To create the GitHub release, install and sign in
+with GitHub CLI (`gh auth login`), create a Markdown release-notes file, and
+run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 `
+  -Publish -NotesFile release-notes.md
+```
+
+Publishing requires a clean `master` branch and an unused version tag. The
+script pushes `master` and `v<version>`, then attaches the ZIP to the GitHub
+release.
+
 ## Usage
 
 Run from an Administrator PowerShell:
