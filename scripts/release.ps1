@@ -35,8 +35,8 @@ $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Project = Join-Path $Repo 'DirSizer.csproj'
 $Dist = Join-Path $Repo 'dist'
 $Runtime = 'win-x64'
-$FetchRemote = 'fetch'
-$PushRemote = 'push'
+$FetchRemote = 'origin'
+$PushRemote = 'origin'
 
 function Invoke-Native([string]$What, [scriptblock]$Command) {
     & $Command
