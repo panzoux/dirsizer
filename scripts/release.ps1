@@ -69,6 +69,8 @@ if ($Publish) {
     $branch = (& git -C $Repo rev-parse --abbrev-ref HEAD).Trim()
     if ($branch -ne 'master') { throw "publish from master (currently on '$branch')" }
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'gh is not on PATH -- install GitHub CLI and run gh auth login.' }
+    & gh repo view panzoux/dirsizer --json nameWithOwner | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'GitHub repository panzoux/dirsizer was not found. Create it or update the repository name in scripts\release.ps1.' }
 
     & git -C $Repo rev-parse -q --verify "refs/tags/$Tag" | Out-Null
     if ($LASTEXITCODE -eq 0) { throw "tag $Tag already exists locally -- bump <Version> in DirSizer.csproj" }
