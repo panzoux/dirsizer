@@ -2,6 +2,10 @@
 
 `dirsizer` is a small, read-only Windows CLI that calculates NTFS folder sizes from MFT metadata instead of recursively enumerating files and directories.
 
+## License
+
+DirSizer is released under the MIT License. See [LICENSE](LICENSE).
+
 ## Status
 
 This is the first practical baseline. It targets NTFS volumes, requires an elevated terminal, and reads metadata with:

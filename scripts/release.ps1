@@ -88,6 +88,7 @@ if (Test-Path $Zip) { Remove-Item $Zip -Force }
 New-Item -ItemType Directory -Force $Stage | Out-Null
 Copy-Item $Exe (Join-Path $Stage 'DirSizer.exe')
 Copy-Item (Join-Path $Repo 'README.md') (Join-Path $Stage 'README.md')
+Copy-Item (Join-Path $Repo 'LICENSE') (Join-Path $Stage 'LICENSE')
 
 Compress-Archive -Path (Join-Path $Stage '*') -DestinationPath $Zip -CompressionLevel Optimal
 $hash = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
