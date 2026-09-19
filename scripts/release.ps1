@@ -35,6 +35,8 @@ $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Project = Join-Path $Repo 'DirSizer.csproj'
 $Dist = Join-Path $Repo 'dist'
 $Runtime = 'win-x64'
+$FetchRemote = 'fetch'
+$PushRemote = 'push'
 
 function Invoke-Native([string]$What, [scriptblock]$Command) {
     & $Command
@@ -70,8 +72,8 @@ if ($Publish) {
 
     & git -C $Repo rev-parse -q --verify "refs/tags/$Tag" | Out-Null
     if ($LASTEXITCODE -eq 0) { throw "tag $Tag already exists locally -- bump <Version> in DirSizer.csproj" }
-    $remoteTag = & git -C $Repo ls-remote --tags origin "refs/tags/$Tag"
-    if ($remoteTag) { throw "tag $Tag already exists on origin" }
+    $remoteTag = & git -C $Repo ls-remote --tags $FetchRemote "refs/tags/$Tag"
+    if ($remoteTag) { throw "tag $Tag already exists on $FetchRemote" }
 }
 
 Write-Host "DirSizer $Tag -- runtime: $Runtime" -ForegroundColor Cyan
@@ -96,8 +98,8 @@ if (-not $Publish) {
 
 Write-Host "`n-- publish $Tag --" -ForegroundColor Cyan
 Invoke-Native 'git tag' { git -C $Repo tag -a $Tag -m "DirSizer $Tag" }
-Invoke-Native 'git push master' { git -C $Repo push origin master }
-Invoke-Native "git push $Tag" { git -C $Repo push origin $Tag }
+Invoke-Native 'git push master' { git -C $Repo push $PushRemote master }
+Invoke-Native "git push $Tag" { git -C $Repo push $PushRemote $Tag }
 Invoke-Native 'gh release create' {
     gh release create $Tag $Zip --repo panzoux/dirsizer --title "DirSizer $Tag" --notes-file $NotesFile --verify-tag
 }
