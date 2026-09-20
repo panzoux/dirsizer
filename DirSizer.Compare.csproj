@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Developer tool: compares the FSCTL and raw-bulk readers record by record on a quiescent NTFS volume.
+       It is not part of the shipped product and contains its own minimal FSCTL_GET_NTFS_FILE_RECORD wrapper so the
+       bulk reader source stays free of FSCTL record access. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Version>0.3.0-p3</Version>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <BaseOutputPath>bin\Compare\</BaseOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="CompareProgram.cs" />
+    <Compile Include="BulkReader.cs" />
+    <ProjectReference Include="DirSizer.Core.csproj" />
+  </ItemGroup>
+</Project>

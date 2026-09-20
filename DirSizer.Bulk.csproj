@@ -3,7 +3,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <Version>0.3.0</Version>
+    <Version>0.3.0-p3</Version>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
@@ -12,17 +12,17 @@
     <DebugType>none</DebugType>
     <StripSymbols>true</StripSymbols>
     <OptimizationPreference>Speed</OptimizationPreference>
-  </PropertyGroup>
-  <!-- The only build that contains the test-only environment-variable hooks (see BulkIntegration.cs). Never used for a release. -->
-  <PropertyGroup Condition="'$(Configuration)' == 'TestHooks'">
-    <DefineConstants>$(DefineConstants);DIRSIZER_TEST_HOOKS</DefineConstants>
-    <Optimize>true</Optimize>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <BaseOutputPath>bin\Bulk\</BaseOutputPath>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="BulkProgram.cs" />
-    <Compile Remove="CompareProgram.cs" />
-    <Compile Remove="CoreRecords.cs" />
-    <Compile Remove="CorePipeline.cs" />
+    <Compile Remove="Program.cs;SelfTests.cs" />
+    <Compile Include="BulkProgram.cs" />
+    <Compile Include="BulkReader.cs" />
+    <Compile Include="BulkStability.cs" />
+    <Compile Include="BulkScanner.cs" />
+    <Compile Include="BulkReport.cs" />
+    <Compile Include="BulkSelfTests.cs" />
     <ProjectReference Include="DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>

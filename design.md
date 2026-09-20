@@ -51,10 +51,9 @@ The default reported size is:
 
 This is **not physical disk allocation size**.
 
-With `--allocated`, report the allocated length of the unnamed `$DATA`
-attribute. For nonresident attributes this is the NTFS allocated length; for
-resident attributes use the stored value length because no separate cluster
-allocation is recorded.
+Physical allocation reporting is deferred. Resident, sparse, compressed, and
+hard-linked allocation semantics require a separate specification and test
+matrix.
 
 By default:
 
@@ -110,7 +109,11 @@ Open the target volume using a volume handle such as:
 \\.\C:
 ```
 
-Use appropriate NTFS filesystem control codes through `DeviceIoControl` to enumerate/read MFT information.
+Use `FSCTL_GET_NTFS_VOLUME_DATA` to obtain the MFT length and record size, then
+use `FSCTL_GET_NTFS_FILE_RECORD` through `DeviceIoControl` to read active MFT
+records. Requests are made from the last estimated record toward record zero;
+the returned record number becomes the next upper bound, avoiding repeated
+queries for free MFT slots.
 
 The implementation must explicitly document which Windows control codes are used and why.
 
@@ -146,6 +149,10 @@ Where:
 FileRef
     MFT record number
     sequence number
+
+The complete 64-bit reference is retained for file and parent identity. The
+in-memory lookup may index active records by record number after validation,
+but the sequence number is not discarded from the model.
 ```
 
 `FileRef` must preserve the complete NTFS file reference, not just the MFT record number.
@@ -247,11 +254,16 @@ However, directory relationships are represented separately through `$FILE_NAME`
 
 The implementation must define and test how hard-linked files contribute to directory totals.
 
-For the initial practical analyzer, the recommended policy is:
+For the initial practical analyzer, the policy is:
 
 > A file's logical size is counted once globally for disk-usage reporting, and hard-link aliases are not treated as independent copies.
 
 If per-directory accounting becomes ambiguous because of hard links, report the limitation rather than silently double-counting.
+
+The selected parent and display name always come from the same `$FILE_NAME`
+entry. Extension records are merged into their base record before this
+relationship is selected, so names and unnamed `$DATA` attributes are not lost
+when one file spans multiple MFT record segments.
 
 ---
 
@@ -297,7 +309,10 @@ Use either:
 * depth/order-based aggregation
 * equivalent iterative algorithm
 
-Avoid deep recursive C# call stacks.
+The implementation uses a leaf-to-root queue with a remaining-child count,
+which avoids depth sorting, per-directory visited sets, and deep recursive C#
+call stacks. MFT record 5 is assigned parent reference zero even though NTFS
+normally stores a self-referential root `$FILE_NAME`.
 
 ---
 
@@ -359,7 +374,8 @@ Rules:
 * Invalid attribute → skip affected attribute/record where safely possible
 * Missing filename → record may be unusable for tree construction
 * Missing data attribute → treat logical file size as zero unless NTFS semantics require another handling
-* Unexpected/corrupt metadata → continue scanning where possible
+* Unexpected/corrupt record attributes → skip the affected record where safe
+* Unexpected volume/device I/O failures → abort with the original error
 
 The final result should include diagnostic counters such as:
 
@@ -374,7 +390,9 @@ invalid records
 
 These counters are useful for determining whether an apparently successful scan was complete.
 
-A malformed individual record must not abort the entire volume scan unless continuing would make the result unsafe or meaningless.
+A malformed individual record must not abort the entire volume scan. Device
+I/O failures are not treated as malformed records because doing so would make
+an incomplete result look successful.
 
 ---
 
@@ -511,14 +529,14 @@ Options:
 --json        Output machine-readable JSON
 ```
 
-Possible future options:
+Deferred options:
 
 ```text
 --allocated   Report physical allocation instead of logical size
 --ads         Include alternate data streams
 ```
 
-These should not be implemented until their semantics are explicitly defined.
+These are not implemented until their semantics are explicitly defined.
 
 ---
 
@@ -647,7 +665,15 @@ Record:
 * peak memory
 * allocation count if practical
 
-Only then optimize hot paths.
+The current FSCTL path uses descending enumeration, shared-buffer parsing, one
+record dictionary, and iterative aggregation. Remaining optimizations should
+be guided by these measurements.
+
+## Stage 6 — Reader comparison
+
+Keep the parser and model independent from the reader. Add an experimental raw
+`$MFT` bulk reader using extent mappings, then compare it with the FSCTL reader
+on live volumes before changing the default.
 
 ---
 
