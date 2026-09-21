@@ -13,7 +13,7 @@ static class BulkScan
     // order and name selection breaks equal-score ties by taking the first name, so the arrival order is part of the
     // result. Visiting blocks from the end and records from the end of each block reproduces the reference order exactly
     // (same dictionary insertion order, same tie-breaks). Blocks are still large, extent-aligned reads.
-    public static BulkResult Read(SafeFileHandle volume, BulkNative.VolumeData metadata, List<BulkNative.MftExtent> extents, bool diagnose, InUseRecordHandler? onInUse = null, Dictionary<ulong, FileRecord>? records = null)
+    public static BulkResult Read(SafeFileHandle volume, BulkNative.VolumeData metadata, List<BulkNative.MftExtent> extents, bool diagnose, InUseRecordHandler? onInUse = null, Dictionary<ulong, FileRecord>? records = null, IScanProgress? progress = null)
     {
         var rejectCounts = new int[Enum.GetValues<ParseReject>().Length];
         var rejectFlags = new Dictionary<(ParseReject Reason, ushort Flags), int>();
@@ -38,6 +38,8 @@ static class BulkScan
         var parserTimer = new Stopwatch();
         var mergeTimer = new Stopwatch();
         var blocks = PlanBlocks(slots * recordSize, recordSize, metadata.BytesPerCluster, extents);
+        long slotsDone = 0;
+        progress?.Report(0, slots);
 
         for (var blockIndex = blocks.Count - 1; blockIndex >= 0; blockIndex--)
         {
@@ -101,6 +103,8 @@ static class BulkScan
                     mergeTimer.Stop();
                 }
             }
+            slotsDone += read / recordSize;
+            progress?.Report(slotsDone, slots);
         }
         timer.Stop();
         // Every slot must land in exactly one bucket; an unexplained remainder means the classification is wrong.
@@ -190,6 +194,15 @@ static class BulkScan
 }
 
 enum SlotKind { Unused, BadSignature, Deleted, FixupFailed, InUse }
+
+// Progress of a scan, reported to the person running the tool. Report is called after every block with the number of MFT
+// slots processed so far; Finish ends the progress line; Message prints a line of its own.
+interface IScanProgress
+{
+    void Report(long current, long total);
+    void Finish();
+    void Message(string text);
+}
 
 // Receives each in-use slot after USA fixup and before parsing. The record span is only valid for the duration of the call.
 delegate void InUseRecordHandler(ulong recordNumber, ReadOnlySpan<byte> record);

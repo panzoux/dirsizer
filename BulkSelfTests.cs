@@ -21,6 +21,8 @@ static class BulkSelfTests
         UncoveredMftRangeFails();
         UnalignedOffsetKeepsItsPositionInsideTheCluster();
         UnalignedReadThatSpillsPastTheExtentIsRejected();
+        ProgressShowsEachPercentOnceAndEndsItsLine();
+        ProgressWithoutAnOpenLineJustPrintsTheMessage();
         ExtentMapContinuesAfterMoreData();
         ExtentMapInOneCallStillWorks();
         MoreDataWithoutProgressFails();
@@ -193,6 +195,43 @@ static class BulkSelfTests
         try { BulkNative.MapLogicalToPhysical(2 * 4096 - 512, 1024, 4096, extents, ref index); }
         catch (IOException) { threw = true; }
         Assert(threw, "a read that starts inside the last cluster of an extent and runs past its end must be rejected");
+    }
+
+    // The scan reports progress on stderr in the same form as dirsizer-fsctl. Each percentage is written once, and the line is
+    // ended before anything else is written, so later warnings never run into it.
+    static string CaptureStderr(Action action)
+    {
+        var captured = new StringWriter();
+        var previous = Console.Error;
+        Console.SetError(captured);
+        try { action(); }
+        finally { Console.SetError(previous); }
+        return captured.ToString();
+    }
+
+    static void ProgressShowsEachPercentOnceAndEndsItsLine()
+    {
+        var text = CaptureStderr(() =>
+        {
+            var progress = new ScanProgress();
+            progress.Report(0, 1000);
+            progress.Report(4, 1000);     // still 0%: must not be written again
+            progress.Report(500, 1000);
+            progress.Report(1000, 1000);
+            progress.Finish();
+            progress.Message("Calculating folder sizes...");
+        });
+        Assert(text.StartsWith("\rScanning MFT: 0/1000 (0%)", StringComparison.Ordinal), $"the first report must show 0%, got: {text}");
+        Assert(!text.Contains("4/1000"), "a report that does not change the percentage must not be written");
+        Assert(text.Contains("\rScanning MFT: 500/1000 (50%)"), "50% must be shown");
+        Assert(text.Contains("\rScanning MFT: 1000/1000 (100%)" + Environment.NewLine), "100% must be shown and its line ended");
+        Assert(text.EndsWith("Calculating folder sizes..." + Environment.NewLine, StringComparison.Ordinal), "the message must come after the ended line");
+    }
+
+    static void ProgressWithoutAnOpenLineJustPrintsTheMessage()
+    {
+        var text = CaptureStderr(() => new ScanProgress().Message("Calculating folder sizes..."));
+        Assert(text == "Calculating folder sizes..." + Environment.NewLine, $"no blank line must be written when no progress line is open, got: {text}");
     }
 
     static void ZeroedSlotIsUnused() =>

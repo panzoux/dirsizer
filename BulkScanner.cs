@@ -4,7 +4,7 @@ using System.Diagnostics;
 // `--reader=bulk` and by the DirSizer.Bulk test harness.
 
 // Test-only members (NoRetry, TestDelayAfterScanMs) exist so the live-instability path can be exercised on a real volume.
-readonly record struct BulkScanSettings(string Volume, bool Diagnose = false, bool NoRetry = false, int TestDelayAfterScanMs = 0);
+readonly record struct BulkScanSettings(string Volume, bool Diagnose = false, bool NoRetry = false, int TestDelayAfterScanMs = 0, IScanProgress? Progress = null);
 
 // LayoutChange.None means the MFT layout was unchanged during the final attempt. Attempts is 1, or 2 after one rescan.
 sealed record BulkScanOutcome(LayoutChange Change, int Attempts, TimeSpan DiscardedTime, PipelineResult Pipeline)
@@ -51,7 +51,8 @@ static class BulkScanner
         var startLayout = new MftLayout(metadata, extents);
 
         var records = new Dictionary<ulong, FileRecord>();
-        var scan = BulkScan.Read(volumeHandle, metadata, extents, settings.Diagnose, null, records);
+        var scan = BulkScan.Read(volumeHandle, metadata, extents, settings.Diagnose, null, records, settings.Progress);
+        settings.Progress?.Finish();   // end the progress line before anything else (a retry notice, a warning) is written
 
         // Test-only: widens the window between the scan and the layout re-check so a test can change the MFT in it.
         // The wait is not a phase, so it lands in "other".
@@ -61,6 +62,7 @@ static class BulkScanner
         stabilityTimer.Stop();
         if (change != LayoutChange.None && canRetry) return new AttemptResult(change, totalTimer.Elapsed, null);
 
+        settings.Progress?.Message("Calculating folder sizes...");   // about a second on a large volume, and otherwise silent
         var relationshipTimer = Stopwatch.StartNew();
         var relationships = RelationshipResolver.Resolve(records);
         SizeAggregator.AddFileSizesToParents(records);

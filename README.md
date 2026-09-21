@@ -129,6 +129,7 @@ Progress is rendered on one updating line to stderr as `current/estimated (perce
 
 - **No fallback.** If the raw read fails, `dirsizer-bulk` reports the error and exits with 1. It never switches to `dirsizer-fsctl` on its own.
 - **Same result.** On a quiescent NTFS test volume the complete output of `dirsizer-bulk` (root size, every directory and file with path, size, and order, the root's children, counters, unresolved records) is identical to that of `dirsizer-fsctl`, in the JIT and the NativeAOT build. `scripts\Compare-Readers.ps1` checks this.
+- **Progress.** Like `dirsizer-fsctl`, it writes progress to stderr on one updating line (`Scanning MFT: n/N (p%)`, then `Calculating folder sizes...`), so a scan that takes several seconds is not silent. stdout, and so `> result.json` and pipes, is unaffected.
 - **Live-volume check.** `dirsizer-bulk` records the MFT layout (volume serial number, geometry, valid data length, and extent map) before and after reading and rescans once if it changed. This detects the MFT growing or being relocated while it is read. It does **not** detect files being created, deleted, or changed inside existing records during the scan; a live volume can always change under either tool.
 
 Exit codes of `dirsizer-bulk` (`dirsizer-fsctl` uses 0 and 1):

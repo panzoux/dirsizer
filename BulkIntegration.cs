@@ -12,9 +12,9 @@ static class BulkIntegration
         // MFT layout re-check open and disable the rescan, so the live-instability path can be tested on a real volume.
         var testDelay = int.TryParse(Environment.GetEnvironmentVariable("DIRSIZER_TEST_BULK_DELAY_AFTER_SCAN_MS"), out var delay) ? Math.Max(0, delay) : 0;
         var testNoRetry = Environment.GetEnvironmentVariable("DIRSIZER_TEST_BULK_NO_RETRY") == "1";
-        var settings = new BulkScanSettings(volume, NoRetry: testNoRetry, TestDelayAfterScanMs: testDelay);
+        var settings = new BulkScanSettings(volume, NoRetry: testNoRetry, TestDelayAfterScanMs: testDelay, Progress: new ScanProgress());
 #else
-        var settings = new BulkScanSettings(volume);
+        var settings = new BulkScanSettings(volume, Progress: new ScanProgress());
 #endif
         var outcome = BulkScanner.Scan(settings);
         var pipeline = outcome.Pipeline;
@@ -43,6 +43,34 @@ static class BulkIntegration
         var files = ResultSelector.SelectTop(pipeline.Candidates.Files, options.Top, record => record.LogicalSize);
         return new ScanResult(volume, pipeline.Records, directories, files, relationships.Root, pipeline.Candidates.RootChildren.ToArray(),
             relationships.UnresolvedRecords, checked((int)scan.Slots), skipped, scanMetrics, outcome.IsStable ? 0 : 3, "bulk", new BulkDetails(outcome));
+    }
+}
+
+// Progress on stderr in the same form as dirsizer-fsctl ("Scanning MFT: n/N (p%)" on one updating line), so a scan that takes
+// several seconds is not silent. Each percentage is written once. Nothing goes to stdout, so listings and JSON are unaffected.
+sealed class ScanProgress : IScanProgress
+{
+    int lastPercent = -1;
+
+    public void Report(long current, long total)
+    {
+        var percent = total == 0 ? 0 : (int)(current * 100L / total);
+        if (percent == lastPercent) return;
+        lastPercent = percent;
+        Console.Error.Write($"\rScanning MFT: {current}/{total} ({percent}%)");
+        Console.Error.Flush();
+    }
+
+    public void Finish()
+    {
+        if (lastPercent >= 0) Console.Error.WriteLine();
+        lastPercent = -1;
+    }
+
+    public void Message(string text)
+    {
+        Finish();
+        Console.Error.WriteLine(text);
     }
 }
 
