@@ -1,6 +1,6 @@
 sealed class FsOptions
 {
-    public string Path { get; private set; } = "";
+    public string Root { get; private set; } = "";
     public int Top { get; private set; } = 25;
     public bool Files { get; private set; }
     public bool Dirs { get; private set; } = true;
@@ -28,15 +28,15 @@ sealed class FsOptions
             if (arg == "--json") { result.Json = true; continue; }
             if (arg.StartsWith("--top=", StringComparison.Ordinal) && int.TryParse(arg[6..], out var top)) { result.Top = Math.Max(1, top); continue; }
             if (arg == "--top" && index + 1 < args.Length && int.TryParse(args[++index], out top)) { result.Top = Math.Max(1, top); continue; }
-            if (arg.StartsWith("--top", StringComparison.Ordinal)) throw new ArgumentException("Use --top N or --top=N.");
+            if (arg.StartsWith("--top", StringComparison.Ordinal)) throw new ArgumentException("--top needs a whole number: --top=N or --top N.");
             if (arg.StartsWith("--workers=", StringComparison.Ordinal) && int.TryParse(arg[10..], out var workers)) { result.Workers = CheckWorkers(workers); continue; }
             if (arg == "--workers" && index + 1 < args.Length && int.TryParse(args[++index], out workers)) { result.Workers = CheckWorkers(workers); continue; }
-            if (arg.StartsWith("--workers", StringComparison.Ordinal)) throw new ArgumentException("Use --workers N or --workers=N.");
+            if (arg.StartsWith("--workers", StringComparison.Ordinal)) throw new ArgumentException("--workers needs a whole number from 1 to 256: --workers=N or --workers N.");
             if (arg.StartsWith('-')) throw new ArgumentException($"Unknown option: {arg}");
-            if (result.Path.Length != 0) throw new ArgumentException("Only one path is supported.");
-            result.Path = arg;
+            if (result.Root.Length != 0) throw new ArgumentException("Only one path is supported.");
+            result.Root = arg;
         }
-        if (!result.Help && !result.SelfTest && result.Path.Length == 0) throw new ArgumentException("A directory path is required, for example C:\\.");
+        if (!result.Help && !result.SelfTest && result.Root.Length == 0) throw new ArgumentException("A directory path is required, for example C:\\.");
         return result;
     }
 

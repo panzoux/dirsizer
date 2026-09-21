@@ -19,13 +19,54 @@ static partial class FsSelfTests
         AssertEqual(@"\\server\share", RootPath.Normalize(@"\\server\share\").Display, "share root display");
         AssertEqual(@"\\?\UNC\server\share", RootPath.Normalize(@"\\server\share").Extended, "share root extended form");
         AssertEqual(@"C:\x", RootPath.Normalize(@"\\?\C:\x").Display, "an extended-length argument is shown without the prefix");
-        AssertThrows<ArgumentException>(() => RootPath.Normalize("  "), "empty path");
+
+        // An extended-length argument is reduced to the ordinary form first, because the API takes "\\?\" paths literally.
+        AssertEqual(@"C:\b", RootPath.Normalize(@"\\?\C:\a\..\b").Display, ".. in an extended-length argument is resolved");
+        AssertEqual(@"\\?\C:\b", RootPath.Normalize(@"\\?\C:\a\..\b").Extended, "and the extended form is rebuilt from the result");
+        AssertEqual(@"C:\", RootPath.Normalize(@"\\?\C:\\").Display, "an extended drive root keeps its backslash");
+        AssertEqual(@"\\server\share\d", RootPath.Normalize(@"\\?\UNC\server\share\d\").Display, "an extended UNC argument");
+        AssertEqual(@"C:\x\y", RootPath.Normalize("C:/x//y").Display, "forward and doubled separators");
+        AssertEqual(Path.GetFullPath("src"), RootPath.Normalize("src").Display, "a relative path is resolved against the current directory");
+
+        // A volume with no drive letter is named by its GUID; that form is kept as typed.
+        const string volume = @"\\?\Volume{12345678-1234-1234-1234-123456789abc}";
+        AssertEqual(volume + @"\", RootPath.Normalize(volume).Display, "a volume root gets its trailing backslash");
+        AssertEqual(volume + @"\", RootPath.Normalize(volume + @"\").Extended, "and is its own extended form");
+        AssertEqual(volume + @"\dir", RootPath.Normalize(volume + @"\dir\").Display, "a folder on a volume");
+
+        // The extended form is what makes paths over 260 characters work.
+        var longName = new string('x', 300);
+        var longRoot = RootPath.Normalize(@"C:\" + longName);
+        AssertEqual(@"\\?\C:\" + longName, longRoot.Extended, "a 300-character name keeps the extended prefix and its full length");
+
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(""), "empty path");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize("  "), "blank path");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(@"\\.\C:\"), "a device path");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(@"\\?\GLOBALROOT\Device\x"), "an extended-length device path");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(@"\\server"), "a network path without a share");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(@"\\?\Volume{no-closing-brace"), "a broken volume path");
+        var quote = MessageOfArgumentException(() => RootPath.Normalize("C:\\dir\""));
+        Assert(quote.Contains("quote"), "a quote in the path is explained (a trailing backslash before a closing quote escapes it)");
+    }
+
+    // The message of the ArgumentException that the action must throw.
+    static string MessageOfArgumentException(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (ArgumentException exception)
+        {
+            return exception.Message;
+        }
+        throw new Exception("expected ArgumentException, nothing was thrown");
     }
 
     static void OptionsAccepted()
     {
         var defaults = FsOptions.Parse([@"C:\"]);
-        AssertEqual(@"C:\", defaults.Path, "path");
+        AssertEqual(@"C:\", defaults.Root, "path");
         AssertEqual(25, defaults.Top, "default top");
         AssertEqual(0, defaults.Workers, "default workers (automatic)");
         Assert(defaults.Dirs && !defaults.Files && !defaults.Json && !defaults.Strict && !defaults.Benchmark, "default flags");
@@ -39,6 +80,9 @@ static partial class FsSelfTests
         AssertEqual(4, FsOptions.Parse(["x", "--workers=4"]).Workers, "--workers=N");
         Assert(FsOptions.Parse(["--help"]).Help, "help needs no path");
         Assert(FsOptions.Parse(["--self-test"]).SelfTest, "self-test needs no path");
+        Assert(FsOptions.Parse(["-h"]).Help, "-h");
+        AssertEqual(1, FsOptions.Parse(["x", "--top", "0"]).Top, "--top 0 is clamped to 1, as in the NTFS tools");
+        AssertEqual(256, FsOptions.Parse(["x", "--workers=256"]).Workers, "the largest number of workers");
     }
 
     static void OptionsRejected()
@@ -50,5 +94,10 @@ static partial class FsSelfTests
         AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers=999"]), "too many workers");
         AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers"]), "workers without a value");
         AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--top"]), "top without a value");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--top=abc"]), "top that is not a number");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--top", "--files"]), "top followed by another option");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers=abc"]), "workers that is not a number");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers=257"]), "one worker too many");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers", "-1"]), "a negative number of workers");
     }
 }
