@@ -15,9 +15,13 @@ if (options.Help)
 }
 if (options.SelfTest) return FsSelfTests.Run();
 
-using var cancel = new CancellationTokenSource();
+// Not disposed on purpose: the Ctrl+C handler can still run while the process ends, and cancelling a disposed source throws.
+var cancel = new CancellationTokenSource();
+var scanning = true;
 Console.CancelKeyPress += (_, e) =>
 {
+    // Only the scan observes the token. Once it is over, Ctrl+C keeps its usual meaning, so that a long output can still be stopped.
+    if (!Volatile.Read(ref scanning)) return;
     e.Cancel = true;
     cancel.Cancel();
 };
@@ -30,6 +34,7 @@ try
         ShowProgress: !Console.IsErrorRedirected,
         cancel.Token);
     var result = FsScanner.Scan(options.Root, settings);
+    Volatile.Write(ref scanning, false);
     FsOutput.Write(result, options, Console.Out, Console.Error);
     return options.Strict && result.Counters.Unreadable > 0 ? 3 : 0;
 }
