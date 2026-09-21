@@ -33,8 +33,13 @@ function Invoke-Tool([string]$Program, [string[]]$Arguments) {
     if ($Program -like '*.dll') { & dotnet $Program @Arguments } else { & $Program @Arguments }
 }
 function Get-Json([string]$Program, [string[]]$Arguments) {
-    $text = Invoke-Tool $Program $Arguments 2>$null
-    if ($LASTEXITCODE -notin 0, 3) { throw "$Program exited with code $LASTEXITCODE" }
+    # The tool's own error message goes to stderr; keep it, so that a failure says why.
+    $errorFile = [IO.Path]::GetTempFileName()
+    try {
+        $text = Invoke-Tool $Program $Arguments 2>$errorFile
+        $code = $LASTEXITCODE
+        if ($code -notin 0, 3) { throw "$Program exited with code ${code}: $((Get-Content -Raw $errorFile).Trim())" }
+    } finally { [IO.File]::Delete($errorFile) }
     ($text -join "`n") | ConvertFrom-Json
 }
 
@@ -49,7 +54,7 @@ if ($Oracle) {
                 if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
                 $sum += Get-DirectoryTotal $child
             }
-        } catch [UnauthorizedAccessException] { }
+        } catch [UnauthorizedAccessException], [IO.IOException] { }   # unreadable or vanished: counts as 0, like dirsizer
         $sum
     }
     "dirsizer against the framework's directory enumeration on $Path"
