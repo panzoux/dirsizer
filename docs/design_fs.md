@@ -231,8 +231,27 @@ JSON (snake_case, same layout as the NTFS tools where the meaning is the same):
 }
 ```
 
+`performance` is always present. Its keys, all numbers except `large_fetch` (a JSON boolean):
+`open_ms`, `walk_ms`, `aggregation_ms`, `finalize_ms`, `other_ms`, `total_ms` and `phase_sum_ms`
+(milliseconds; the phases add up to `total_ms`), `enum_ms_total` and `idle_ms_total` (milliseconds
+summed over all workers), `workers`, `peak_queued_dirs`, `managed_allocated_bytes`,
+`peak_working_set_bytes`, `entries_per_sec`, `directories_per_sec`, `logical_mib_per_sec`.
+
+Differences from the NTFS tools' JSON: the top-level layout is the same, so a consumer that reads
+`volume`, `root`, `root_children`, `directories`, `files`, `statistics.directories`, `statistics.files`
+and `reader` works with both. There are no `records_*` counters and no `bulk` object; `statistics`
+has `directories_scanned`, `directories_denied`, `directories_failed`, `reparse_skipped`, `bytes` and
+`error_samples` instead; `performance` has the keys above instead of the query, parser and
+relationship timings, and its rates are named `*_per_sec` (the NTFS tools use `*_per_second`), so
+`scripts\Get-ReferenceSnapshot.ps1`, which removes the volatile fields of the NTFS tools by name, does
+not apply to this tool. The JSON text is ASCII only (non-ASCII characters in paths are escaped as
+`\uXXXX`), so it is exact under any console code page; the table output follows the console code page,
+so use `--json` when paths must be exact. The numbers of the `--benchmark` line on stderr have no
+thousands separators, so that the line can be split on `,` and `=`.
+
 `error_samples` holds up to 20 messages for directories that failed for a reason other than access
-denied (denied directories are only counted). `root_children` holds at most `top` entries
+denied (denied directories are only counted). If more directories failed than there are samples, the
+warning on stderr says how many are not listed. `root_children` holds at most `top` entries
 (directories and files mixed, largest first). `volume`
 is the root path as given after normalisation (it is not necessarily a drive). `directories`
 in `statistics` is the number of directory nodes found (including the root and any that were denied

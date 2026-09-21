@@ -2266,6 +2266,38 @@ static partial class FsSelfTests
         var quietError = new StringWriter();
         FsOutput.Write(SyntheticResult(0, 0, []), FsOptions.Parse([@"C:\r"]), new StringWriter(), quietError);
         AssertEqual("", quietError.ToString(), "nothing on stderr when every directory was read");
+        Assert(!error.ToString().Contains("more failed"), "no 'more failed' line when every failed directory has a sample");
+
+        // More failed directories than samples: the reader is told that the list is cut.
+        var cutError = new StringWriter();
+        FsOutput.Write(SyntheticResult(denied: 0, failed: 25, [sample]), FsOptions.Parse([@"C:\r"]), new StringWriter(), cutError);
+        Assert(cutError.ToString().Contains("... and 24 more failed directories that are not listed"), "the sample list says that it is cut");
+
+        // JSON mode with --benchmark: stdout stays exactly one JSON document; the warning and the benchmark line go to stderr.
+        var jsonOut = new StringWriter();
+        var jsonErr = new StringWriter();
+        FsOutput.Write(SyntheticResult(denied: 2, failed: 1, [sample]), FsOptions.Parse([@"C:\r", "--json", "--benchmark"]), jsonOut, jsonErr);
+        using (JsonDocument.Parse(jsonOut.ToString())) { }   // throws unless stdout holds one JSON document and nothing else
+        Assert(jsonErr.ToString().Contains("warning:") && jsonErr.ToString().Contains("benchmark: workers=4"), "the warning and the benchmark line are on stderr");
+        Assert(!jsonOut.ToString().Contains("warning:") && !jsonOut.ToString().Contains("benchmark:"), "and not in the JSON");
+
+        // The benchmark line can be split on "," and "=" whatever the size of the numbers (no thousands separators).
+        var big = SyntheticResult(0, 0, []);
+        big = big with { Metrics = big.Metrics with { Walk = TimeSpan.FromMilliseconds(19973.4), Total = TimeSpan.FromMilliseconds(20000), Entries = 2_500_000 } };
+        var bigError = new StringWriter();
+        FsOutput.Write(big, FsOptions.Parse([@"C:\r", "--benchmark"]), new StringWriter(), bigError);
+        var line = bigError.ToString().Trim();
+        Assert(line.Contains("walk_ms=19973.4"), "a walk of 19973.4 ms is written without a thousands separator");
+        AssertEqual(line.Split(',').Length, line.Split('=').Length - 1, "every field between commas has exactly one '=': no comma inside a value");
+
+        // Non-ASCII and volume paths survive a round trip through JSON, and the JSON itself is ASCII only.
+        var volumePath = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\\u65e5\u672c\u8a9e & 'x'";
+        var unicode = SyntheticResult(0, 0, []) with { Directories = [new ResultItem(volumePath, 1)] };
+        var unicodeOut = new StringWriter();
+        FsOutput.Write(unicode, FsOptions.Parse([@"C:\r", "--json"]), unicodeOut, new StringWriter());
+        using var unicodeDocument = JsonDocument.Parse(unicodeOut.ToString());
+        AssertEqual(volumePath, unicodeDocument.RootElement.GetProperty("directories")[0].GetProperty("path").GetString(), "the path comes back unchanged");
+        foreach (var character in unicodeOut.ToString()) Assert(character < 128, "the JSON text is ASCII only (non-ASCII characters are escaped)");
     }
 
     static void TextOutput()
@@ -2284,6 +2316,11 @@ static partial class FsSelfTests
         Assert(output.Contains("7,011"), "sizes are grouped");
         Assert(error.ToString().Contains("benchmark: workers=2"), "--benchmark prints the timings to stderr");
         Assert(!error.ToString().Contains("warning"), "no warning when every directory was read");
+
+        var plain = new StringWriter();
+        FsOutput.Write(Scan(tree.Root, 2, top: 3), FsOptions.Parse([tree.Root, "--top=3"]), plain, new StringWriter());
+        Assert(plain.ToString().Contains("Directories (largest 3)"), "the directory table is always shown");
+        Assert(!plain.ToString().Contains("Files (largest"), "the file table only with --files");
     }
 
     static void JsonOutput()
@@ -2309,9 +2346,24 @@ static partial class FsSelfTests
         foreach (var name in new[] { "directories_scanned", "directories_denied", "directories_failed", "reparse_skipped", "files", "error_samples" })
             Assert(statistics.TryGetProperty(name, out _), $"statistics.{name} is present");
         var performance = statistics.GetProperty("performance");
-        foreach (var name in new[] { "open_ms", "walk_ms", "aggregation_ms", "finalize_ms", "other_ms", "total_ms", "phase_sum_ms", "enum_ms_total", "idle_ms_total", "workers", "large_fetch", "peak_queued_dirs", "entries_per_sec", "directories_per_sec", "logical_mib_per_sec" })
+        foreach (var name in new[] { "open_ms", "walk_ms", "aggregation_ms", "finalize_ms", "other_ms", "total_ms", "phase_sum_ms", "enum_ms_total", "idle_ms_total", "workers", "large_fetch", "peak_queued_dirs", "managed_allocated_bytes", "peak_working_set_bytes", "entries_per_sec", "directories_per_sec", "logical_mib_per_sec" })
             Assert(performance.TryGetProperty(name, out _), $"performance.{name} is present");
         AssertEqual(2, performance.GetProperty("workers").GetInt32(), "performance.workers");
+        Assert(performance.GetProperty("large_fetch").ValueKind is JsonValueKind.True or JsonValueKind.False, "performance.large_fetch is a JSON boolean");
+        Assert(performance.GetProperty("total_ms").ValueKind == JsonValueKind.Number, "timings are JSON numbers");
+
+        // root_children: contents and order (wide 251225, long 7011, deep 4007 for the standard tree).
+        var children = root.GetProperty("root_children");
+        AssertEqual("251225,7011,4007", string.Join(',', new[] { children[0].GetProperty("size").GetInt64(), children[1].GetProperty("size").GetInt64(), children[2].GetProperty("size").GetInt64() }), "root_children sizes, largest first");
+        Assert(children[0].GetProperty("path").GetString()!.EndsWith("\\wide"), "the largest root child is the wide directory");
+
+        // --files with --json: a non-empty, descending files array.
+        var withFiles = new StringWriter();
+        FsOutput.Write(Scan(tree.Root, 2, files: true, top: 3), FsOptions.Parse([tree.Root, "--json", "--files", "--top=3"]), withFiles, new StringWriter());
+        using var filesDocument = JsonDocument.Parse(withFiles.ToString());
+        var fileItems = filesDocument.RootElement.GetProperty("files");
+        AssertEqual(3, fileItems.GetArrayLength(), "--files: three files");
+        AssertEqual("7011,5049,5048", string.Join(',', new[] { fileItems[0].GetProperty("size").GetInt64(), fileItems[1].GetProperty("size").GetInt64(), fileItems[2].GetProperty("size").GetInt64() }), "--files: largest first");
     }
 }
 ```
@@ -2338,6 +2390,8 @@ static class FsOutput
     {
         if (options.Json)
         {
+            // The default encoder writes ASCII only (non-ASCII characters become \uXXXX escapes), so the JSON is exact even when stdout
+            // is redirected through a console code page that cannot represent every character in a path.
             output.WriteLine(JsonSerializer.Serialize(ToJson(result, options.Top), FsJsonContext.Default.JsonFsOutput));
         }
         else
@@ -2364,16 +2418,19 @@ static class FsOutput
         {
             error.WriteLine($"warning: {result.Counters.Unreadable:N0} directories could not be read (denied {result.Counters.DirectoriesDenied:N0}, failed {result.Counters.DirectoriesFailed:N0}); the sizes are a lower bound.");
             foreach (var sample in result.ErrorSamples) error.WriteLine($"  failed: {sample}");
+            var notListed = result.Counters.DirectoriesFailed - result.ErrorSamples.Length;
+            if (notListed > 0) error.WriteLine($"  ... and {notListed:N0} more failed directories that are not listed");
         }
         if (options.Benchmark) error.WriteLine(BenchmarkLine(result.Metrics));
     }
 
+    // Plain numbers (F, not N): no thousands separators, so the line can be split on "," and "=" whatever the size of the scan.
     static string BenchmarkLine(FsMetrics m) =>
-        $"benchmark: workers={m.Workers}, large_fetch={(m.LargeFetch ? "on" : "off")}, open_ms={m.Open.TotalMilliseconds:N1}, walk_ms={m.Walk.TotalMilliseconds:N1}, " +
-        $"aggregation_ms={m.Aggregation.TotalMilliseconds:N1}, finalize_ms={m.Finalize.TotalMilliseconds:N1}, other_ms={m.Other.TotalMilliseconds:N1}, " +
-        $"total_ms={m.Total.TotalMilliseconds:N1}, phase_sum_ms={m.PhaseSum.TotalMilliseconds:N1}, enum_ms_total={m.EnumTotal.TotalMilliseconds:N1}, " +
-        $"idle_ms_total={m.IdleTotal.TotalMilliseconds:N1}, peak_queued_dirs={m.PeakQueuedDirs}, entries_per_sec={m.EntriesPerSec:N0}, " +
-        $"directories_per_sec={m.DirectoriesPerSec:N0}, logical_mib_per_sec={m.LogicalMibPerSec:N1}, managed_allocated={m.ManagedAllocatedBytes}, peak_working_set={m.PeakWorkingSetBytes}";
+        $"benchmark: workers={m.Workers}, large_fetch={(m.LargeFetch ? "on" : "off")}, open_ms={m.Open.TotalMilliseconds:F1}, walk_ms={m.Walk.TotalMilliseconds:F1}, " +
+        $"aggregation_ms={m.Aggregation.TotalMilliseconds:F1}, finalize_ms={m.Finalize.TotalMilliseconds:F1}, other_ms={m.Other.TotalMilliseconds:F1}, " +
+        $"total_ms={m.Total.TotalMilliseconds:F1}, phase_sum_ms={m.PhaseSum.TotalMilliseconds:F1}, enum_ms_total={m.EnumTotal.TotalMilliseconds:F1}, " +
+        $"idle_ms_total={m.IdleTotal.TotalMilliseconds:F1}, peak_queued_dirs={m.PeakQueuedDirs}, entries_per_sec={m.EntriesPerSec:F0}, " +
+        $"directories_per_sec={m.DirectoriesPerSec:F0}, logical_mib_per_sec={m.LogicalMibPerSec:F1}, managed_allocated={m.ManagedAllocatedBytes}, peak_working_set={m.PeakWorkingSetBytes}";
 
     public static JsonFsOutput ToJson(FsResult result, int top)
     {
@@ -2998,7 +3055,7 @@ Insert this section immediately before the heading `## dirsizer-bulk (experiment
 .\dirsizer.exe C:\ --strict --workers 8 --benchmark
 ```
 
-The options are those of the NTFS tools plus `--workers N` (default: the number of processors, at most 8) and `--strict` (exit code 3 if a directory could not be read; the result is still written). The path may be any directory, not only a drive root. Exit codes: 0 result written; 1 error; 3 with `--strict`, at least one directory could not be read. Progress is one updating line on stderr (`Scanning: N directories, M files`), shown only when stderr is a terminal.
+The options are those of the NTFS tools plus `--workers N` (default: the number of processors, at most 8) and `--strict` (exit code 3 if a directory could not be read; the result is still written). The path may be any directory, not only a drive root. Exit codes: 0 result written; 1 error; 3 with `--strict`, at least one directory could not be read. Progress is one updating line on stderr (`Scanning: N directories, M files`), shown only when stderr is a terminal. The JSON output is ASCII only (non-ASCII characters in paths are escaped), so it is exact under any console code page; the table output follows the console code page, so use `--json` when paths must be exact. The JSON has the same top-level layout as the NTFS tools' but different `statistics` and `performance` keys; see [docs/design_fs.md](docs/design_fs.md).
 
 Its results are **not identical** to those of the NTFS tools, by design (details and measured differences: [docs/design_fs.md](docs/design_fs.md)):
 
@@ -3162,7 +3219,7 @@ Insert this section immediately before the heading `## dirsizer-bulk（実験的
 .\dirsizer.exe C:\ --strict --workers 8 --benchmark
 ```
 
-オプションは NTFS 向けツールと同じもの（`--top`、`--files`、`--dirs`、`--json`、`--benchmark`、`--self-test`）に加え、`--workers N`（既定はプロセッサ数、最大 8）と `--strict`（読み取れないディレクトリがあれば終了コード 3。結果は出力されます）があります。パスはドライブのルートに限らず、任意のディレクトリを指定できます。終了コード: 0 = 結果を出力、1 = エラー、3 = `--strict` 指定時に読み取れないディレクトリがあった。進捗は stderr に 1 行で更新表示され（`Scanning: N directories, M files`）、stderr がターミナルのときだけ表示されます。
+オプションは NTFS 向けツールと同じもの（`--top`、`--files`、`--dirs`、`--json`、`--benchmark`、`--self-test`）に加え、`--workers N`（既定はプロセッサ数、最大 8）と `--strict`（読み取れないディレクトリがあれば終了コード 3。結果は出力されます）があります。パスはドライブのルートに限らず、任意のディレクトリを指定できます。終了コード: 0 = 結果を出力、1 = エラー、3 = `--strict` 指定時に読み取れないディレクトリがあった。進捗は stderr に 1 行で更新表示され（`Scanning: N directories, M files`）、stderr がターミナルのときだけ表示されます。JSON 出力は ASCII のみ（パス中の非 ASCII 文字はエスケープされます）なので、コンソールのコードページに関係なく正確です。表形式の出力はコンソールのコードページに従うため、パスを正確に得たいときは `--json` を使ってください。JSON の最上位の構成は NTFS 向けツールと同じですが、`statistics` と `performance` のキーは異なります（[docs/design_fs.md](docs/design_fs.md)（英語）を参照）。
 
 結果は NTFS 向けツールと**同一にはなりません**（仕様です。詳細と実測した差異は [docs/design_fs.md](docs/design_fs.md)（英語）を参照）:
 
