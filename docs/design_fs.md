@@ -189,6 +189,14 @@ dirsizer <path> [--top=N] [--files] [--dirs] [--json] [--workers N] [--strict]
 (default `--top=25`, directories shown by default). `--workers N` and `--strict` are new. There is no
 reader option and nothing about enumeration internals is exposed. One path only.
 
+The path is normalised before use: `C:` means the drive root `C:\` (as in the NTFS tools), `.`, `..`
+and forward slashes are resolved, and an extended-length argument (`\\?\C:\...`, `\\?\UNC\...`) is
+first reduced to its ordinary form, because the API takes `\\?\` paths literally and would not resolve
+them. A volume with no drive letter can be named as `\\?\Volume{guid}\` (kept as typed). Device paths
+(`\\.\...`, `\\?\GLOBALROOT\...`), a network path without a share, and a path containing a quote,
+`<`, `>`, `|` or a control character are rejected with an error; the quote case says that a trailing
+backslash before a closing quote escapes it (`"C:\dir\"` reaches the program as `C:\dir"`).
+
 The executable has its own manifest with `requestedExecutionLevel level="asInvoker"`. It does not
 use `ConsolePause` (that exists only because elevated consoles vanish on exit). It does not use
 `Shared\app.manifest`, and none of the existing projects change.

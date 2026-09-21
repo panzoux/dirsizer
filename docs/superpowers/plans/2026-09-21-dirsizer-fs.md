@@ -1046,13 +1046,54 @@ static partial class FsSelfTests
         AssertEqual(@"\\server\share", RootPath.Normalize(@"\\server\share\").Display, "share root display");
         AssertEqual(@"\\?\UNC\server\share", RootPath.Normalize(@"\\server\share").Extended, "share root extended form");
         AssertEqual(@"C:\x", RootPath.Normalize(@"\\?\C:\x").Display, "an extended-length argument is shown without the prefix");
-        AssertThrows<ArgumentException>(() => RootPath.Normalize("  "), "empty path");
+
+        // An extended-length argument is reduced to the ordinary form first, because the API takes "\\?\" paths literally.
+        AssertEqual(@"C:\b", RootPath.Normalize(@"\\?\C:\a\..\b").Display, ".. in an extended-length argument is resolved");
+        AssertEqual(@"\\?\C:\b", RootPath.Normalize(@"\\?\C:\a\..\b").Extended, "and the extended form is rebuilt from the result");
+        AssertEqual(@"C:\", RootPath.Normalize(@"\\?\C:\\").Display, "an extended drive root keeps its backslash");
+        AssertEqual(@"\\server\share\d", RootPath.Normalize(@"\\?\UNC\server\share\d\").Display, "an extended UNC argument");
+        AssertEqual(@"C:\x\y", RootPath.Normalize("C:/x//y").Display, "forward and doubled separators");
+        AssertEqual(Path.GetFullPath("src"), RootPath.Normalize("src").Display, "a relative path is resolved against the current directory");
+
+        // A volume with no drive letter is named by its GUID; that form is kept as typed.
+        const string volume = @"\\?\Volume{12345678-1234-1234-1234-123456789abc}";
+        AssertEqual(volume + @"\", RootPath.Normalize(volume).Display, "a volume root gets its trailing backslash");
+        AssertEqual(volume + @"\", RootPath.Normalize(volume + @"\").Extended, "and is its own extended form");
+        AssertEqual(volume + @"\dir", RootPath.Normalize(volume + @"\dir\").Display, "a folder on a volume");
+
+        // The extended form is what makes paths over 260 characters work.
+        var longName = new string('x', 300);
+        var longRoot = RootPath.Normalize(@"C:\" + longName);
+        AssertEqual(@"\\?\C:\" + longName, longRoot.Extended, "a 300-character name keeps the extended prefix and its full length");
+
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(""), "empty path");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize("  "), "blank path");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(@"\\.\C:\"), "a device path");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(@"\\?\GLOBALROOT\Device\x"), "an extended-length device path");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(@"\\server"), "a network path without a share");
+        AssertThrows<ArgumentException>(() => RootPath.Normalize(@"\\?\Volume{no-closing-brace"), "a broken volume path");
+        var quote = MessageOfArgumentException(() => RootPath.Normalize("C:\\dir\""));
+        Assert(quote.Contains("quote"), "a quote in the path is explained (a trailing backslash before a closing quote escapes it)");
+    }
+
+    // The message of the ArgumentException that the action must throw.
+    static string MessageOfArgumentException(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (ArgumentException exception)
+        {
+            return exception.Message;
+        }
+        throw new Exception("expected ArgumentException, nothing was thrown");
     }
 
     static void OptionsAccepted()
     {
         var defaults = FsOptions.Parse([@"C:\"]);
-        AssertEqual(@"C:\", defaults.Path, "path");
+        AssertEqual(@"C:\", defaults.Root, "path");
         AssertEqual(25, defaults.Top, "default top");
         AssertEqual(0, defaults.Workers, "default workers (automatic)");
         Assert(defaults.Dirs && !defaults.Files && !defaults.Json && !defaults.Strict && !defaults.Benchmark, "default flags");
@@ -1066,6 +1107,9 @@ static partial class FsSelfTests
         AssertEqual(4, FsOptions.Parse(["x", "--workers=4"]).Workers, "--workers=N");
         Assert(FsOptions.Parse(["--help"]).Help, "help needs no path");
         Assert(FsOptions.Parse(["--self-test"]).SelfTest, "self-test needs no path");
+        Assert(FsOptions.Parse(["-h"]).Help, "-h");
+        AssertEqual(1, FsOptions.Parse(["x", "--top", "0"]).Top, "--top 0 is clamped to 1, as in the NTFS tools");
+        AssertEqual(256, FsOptions.Parse(["x", "--workers=256"]).Workers, "the largest number of workers");
     }
 
     static void OptionsRejected()
@@ -1077,6 +1121,11 @@ static partial class FsSelfTests
         AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers=999"]), "too many workers");
         AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers"]), "workers without a value");
         AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--top"]), "top without a value");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--top=abc"]), "top that is not a number");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--top", "--files"]), "top followed by another option");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers=abc"]), "workers that is not a number");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers=257"]), "one worker too many");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["a", "--workers", "-1"]), "a negative number of workers");
     }
 }
 ```
@@ -1099,11 +1148,44 @@ Expected: FAIL to compile, `error CS0103`/`CS0246` naming `RootPath` and `FsOpti
 // the LongPathsEnabled setting is.
 readonly record struct RootPath(string Display, string Extended)
 {
-    // Throws ArgumentException for an empty or invalid path. Does not check that the directory exists.
+    // On .NET Core Path.GetInvalidPathChars() lists only '|' and the control characters; a quote, '<' and '>' cannot be in a Windows
+    // path either, and a quote is what a trailing backslash before a closing quote leaves behind.
+    static readonly char[] InvalidPathChars = [.. Path.GetInvalidPathChars(), '"', '<', '>'];
+
+    // Throws ArgumentException for an empty path, a character that cannot be in a path, a device path, or a network path without a
+    // server and a share. Does not check that the directory exists.
     public static RootPath Normalize(string argument)
     {
         var text = argument.Trim();
         if (text.Length == 0) throw new ArgumentException("A directory path is required, for example C:\\.");
+        var invalid = text.IndexOfAny(InvalidPathChars);
+        if (invalid >= 0)
+        {
+            throw new ArgumentException(text[invalid] == '"'
+                ? "The path contains a quote character. A backslash right before a closing quote escapes it: leave the trailing backslash out, for example \"C:\\Program Files\"."
+                : $"The path contains a character that is not allowed in a path: {text[invalid]}");
+        }
+
+        // \\?\Volume{guid}\ names a volume that has no drive letter. It is already an extended-length path and stripping its prefix
+        // would leave something that is not a path, so it is used as typed, apart from the trailing backslash. "." and ".." in it
+        // are not resolved.
+        if (text.StartsWith(@"\\?\Volume{", StringComparison.OrdinalIgnoreCase))
+        {
+            var closing = text.IndexOf('}');
+            var volume = closing < 0 ? "" : text[..(closing + 1)];
+            var below = closing < 0 ? "" : text[(closing + 1)..].TrimEnd('\\');
+            if (closing < 0 || below.Length > 0 && below[0] != '\\') throw new ArgumentException($"Invalid volume path: {argument}");
+            var volumePath = below.Length == 0 ? volume + "\\" : volume + below;
+            return new RootPath(volumePath, volumePath);
+        }
+
+        // Reduce an extended-length argument to its ordinary form first. GetFullPath does not normalise "\\?\" paths, and the extended
+        // form is built again below from the normalised text, so "." or ".." or "/" in the argument are resolved, never taken literally.
+        if (text.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) text = @"\\" + text[8..];
+        else if (text.StartsWith(@"\\?\", StringComparison.Ordinal) && text.Length >= 6 && char.IsAsciiLetter(text[4]) && text[5] == ':') text = text[4..];
+        else if (text.StartsWith(@"\\?\", StringComparison.Ordinal) || text.StartsWith(@"\\.\", StringComparison.Ordinal))
+            throw new ArgumentException($"Device paths are not supported: {argument}");
+
         // "C:" alone means the drive root here, as in the NTFS tools (Windows itself would take it as the current directory of C:).
         if (text.Length == 2 && char.IsAsciiLetter(text[0]) && text[1] == ':') text += "\\";
         string full;
@@ -1114,6 +1196,13 @@ readonly record struct RootPath(string Display, string Extended)
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
             throw new ArgumentException($"Invalid path: {argument}", exception);
+        }
+        if (full.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            // A device name such as C:\con comes back from GetFullPath as \\.\con.
+            var parts = full[2..].Split('\\', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 0 && parts[0] is "." or "?") throw new ArgumentException($"Device paths are not supported: {argument}");
+            if (parts.Length < 2) throw new ArgumentException($"A network path must name a server and a share, for example \\\\server\\share: {argument}");
         }
         var display = ToDisplay(full);
         var rootLength = Path.GetPathRoot(display)?.Length ?? 0;
@@ -1130,6 +1219,7 @@ readonly record struct RootPath(string Display, string Extended)
 
     public static string ToDisplay(string path)
     {
+        if (path.StartsWith(@"\\?\Volume{", StringComparison.OrdinalIgnoreCase)) return path;   // a volume path has no shorter form
         if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + path[8..];
         if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path[4..];
         return path;
@@ -1142,7 +1232,7 @@ readonly record struct RootPath(string Display, string Extended)
 ```csharp
 sealed class FsOptions
 {
-    public string Path { get; private set; } = "";
+    public string Root { get; private set; } = "";
     public int Top { get; private set; } = 25;
     public bool Files { get; private set; }
     public bool Dirs { get; private set; } = true;
@@ -1170,15 +1260,15 @@ sealed class FsOptions
             if (arg == "--json") { result.Json = true; continue; }
             if (arg.StartsWith("--top=", StringComparison.Ordinal) && int.TryParse(arg[6..], out var top)) { result.Top = Math.Max(1, top); continue; }
             if (arg == "--top" && index + 1 < args.Length && int.TryParse(args[++index], out top)) { result.Top = Math.Max(1, top); continue; }
-            if (arg.StartsWith("--top", StringComparison.Ordinal)) throw new ArgumentException("Use --top N or --top=N.");
+            if (arg.StartsWith("--top", StringComparison.Ordinal)) throw new ArgumentException("--top needs a whole number: --top=N or --top N.");
             if (arg.StartsWith("--workers=", StringComparison.Ordinal) && int.TryParse(arg[10..], out var workers)) { result.Workers = CheckWorkers(workers); continue; }
             if (arg == "--workers" && index + 1 < args.Length && int.TryParse(args[++index], out workers)) { result.Workers = CheckWorkers(workers); continue; }
-            if (arg.StartsWith("--workers", StringComparison.Ordinal)) throw new ArgumentException("Use --workers N or --workers=N.");
+            if (arg.StartsWith("--workers", StringComparison.Ordinal)) throw new ArgumentException("--workers needs a whole number from 1 to 256: --workers=N or --workers N.");
             if (arg.StartsWith('-')) throw new ArgumentException($"Unknown option: {arg}");
-            if (result.Path.Length != 0) throw new ArgumentException("Only one path is supported.");
-            result.Path = arg;
+            if (result.Root.Length != 0) throw new ArgumentException("Only one path is supported.");
+            result.Root = arg;
         }
-        if (!result.Help && !result.SelfTest && result.Path.Length == 0) throw new ArgumentException("A directory path is required, for example C:\\.");
+        if (!result.Help && !result.SelfTest && result.Root.Length == 0) throw new ArgumentException("A directory path is required, for example C:\\.");
         return result;
     }
 
@@ -2251,7 +2341,7 @@ try
         options.Files,
         ShowProgress: !Console.IsErrorRedirected,
         cancel.Token);
-    var result = FsScanner.Scan(options.Path, settings);
+    var result = FsScanner.Scan(options.Root, settings);
     FsOutput.Write(result, options, Console.Out, Console.Error);
     return options.Strict && result.Counters.Unreadable > 0 ? 3 : 0;
 }
