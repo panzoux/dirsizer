@@ -12,7 +12,7 @@
 
 ## Ground rules for the executing agent
 
-- **The code in this plan was built and run before it was written down.** It compiles with 0 warnings, and its 26 self-tests pass in the JIT build and in the NativeAOT build (2026-09-21, prototype in a scratch folder). Copy it exactly. If something does not compile or a test fails, that is new information: investigate, do not "fix" by rewriting. A change to the design (for example enabling `AllowUnsafeBlocks`) needs the user's approval.
+- **The code in this plan was built and run before it was written down.** It compiles with 0 warnings, and its 28 self-tests pass in the JIT build and in the NativeAOT build (2026-09-21, prototype in a scratch folder). Copy it exactly. If something does not compile or a test fails, that is new information: investigate, do not "fix" by rewriting. A change to the design (for example enabling `AllowUnsafeBlocks`) needs the user's approval.
 - **The commands were rehearsed in a clone of this repository** (a copy in a scratch folder, not this working tree): the file placement and `dotnet sln add` of Task 1, the build, the JIT and NativeAOT self-tests, the checks of Task 6 Steps 2-4, the script of Task 8 with its default paths, the `release.ps1` edit of Task 9 Step 1, and the package check of Task 10 Step 2 (release script about 1 minute). Not rehearsed: the mutations of Task 7, the documentation edits of Task 9 Steps 2-8 (their `old` texts were checked to occur exactly once in the current files), the full-volume sweep, and any non-elevated start.
 - **Run all commands in an unrestricted PowerShell from the repository root** (`C:\Users\user\source\repos\panzoux\dirsizer`). A sandboxed or restricted shell can ignore deny ACLs; then the "denied" self-test *skips itself with a message* instead of running (24 passed, 1 skipped). That is acceptable for a run in such a shell but the final verification (Task 10) needs the unrestricted run with 0 skipped.
 - **Do not edit** anything under `src\DirSizer.Core`, `src\DirSizer.Bulk`, `src\DirSizer.Fsctl`, `src\DirSizer.Inspect`, `src\DirSizer.Compare` or `src\Shared`. Task 10 checks this with `git diff`.
@@ -60,7 +60,7 @@ All new files are under `src\DirSizer.Fs\` unless stated otherwise.
 | `scripts\Compare-Fs.ps1` | oracle / bulk comparison, worker sweep | 8 |
 | `DirSizer.sln`, `scripts\release.ps1`, `README.md`, `README-jp.md`, `docs\roadmap.md`, `docs\design.md`, `docs\design_mft.md` | registration, packaging, documentation | 1, 9 |
 
-The tests register themselves through `static partial void Add...Tests(List<SelfTest>)` methods declared in `SelfTests.cs`. A file that implements one is picked up automatically, so each task only adds files. The expected test count therefore grows task by task: 5, 10, 13, 23, 26.
+The tests register themselves through `static partial void Add...Tests(List<SelfTest>)` methods declared in `SelfTests.cs`. A file that implements one is picked up automatically, so each task only adds files. The expected test count therefore grows task by task: 5, 10, 13, 25, 28.
 
 ---
 
@@ -158,6 +158,7 @@ This task also settles the one open technical question of the spec: a blittable 
 
 ```csharp
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 
 // The built-in tests (dirsizer --self-test). They need no elevation and no volume: file-system tests build a fixture in a
 // temporary folder and remove it afterwards. Each group of tests lives in its own file and registers itself through one of
@@ -192,7 +193,7 @@ static partial class FsSelfTests
         {
             try
             {
-                test.Body();
+                RunWithTimeout(test);
                 Console.WriteLine($"ok    {test.Name}");
             }
             catch (SkipException skip)
@@ -212,6 +213,29 @@ static partial class FsSelfTests
             ? $"{tests.Count - skipped} self-tests passed, {skipped} skipped."
             : $"{failed} of {tests.Count} self-tests FAILED.");
         return failed == 0 ? 0 : 1;
+    }
+
+    static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(120);
+
+    // A test that hangs (a deadlock in the walk would) must fail, not stop the whole run. The body runs on its own background
+    // thread; if it does not finish in time the test fails and the run goes on.
+    static void RunWithTimeout(SelfTest test)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                test.Body();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+        }) { IsBackground = true, Name = "self-test" };
+        thread.Start();
+        if (!thread.Join(TestTimeout)) throw new Exception($"timed out after {TestTimeout.TotalSeconds:N0} s (a hang or a deadlock)");
+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     static void Assert(bool condition, string message)
@@ -609,7 +633,8 @@ static class Win32Find
 `src\DirSizer.Fs\DirectoryReader.cs`:
 
 ```csharp
-enum ReadOutcome { Complete, Denied, Failed }
+// NotRead is the default value on purpose: a result that was never filled in must not look like a successful read.
+enum ReadOutcome { NotRead, Complete, Denied, Failed }
 
 readonly record struct ReadResult(ReadOutcome Outcome, int Error);
 
@@ -1359,9 +1384,11 @@ static partial class FsSelfTests
         tests.Add(new("walk finishes on a very deep chain (1 and 8 workers)", WalkDeepChain));
         tests.Add(new("walk finishes on a very wide fan-out and reports the queue peak", WalkWideFanOut));
         tests.Add(new("walk with LARGE_FETCH rejected: one worker fails once, eight at most eight times", WalkLargeFetchRejected));
-        tests.Add(new("walk reports a bad root as an error", WalkBadRoot));
-        tests.Add(new("walk stops when canceled", WalkCanceled));
+        tests.Add(new("walk counts a directory that fails and keeps the rest", WalkFailedDirectory));
+        tests.Add(new("walk reports a bad root or bad settings as an error", WalkBadRoot));
+        tests.Add(new("walk stops when canceled, before and while it runs", WalkCanceled));
         tests.Add(new("walk stops and rethrows when a worker throws", WalkWorkerThrows));
+        tests.Add(new("walk leaves no worker running when the caller fails", WalkStopsWorkersWhenTheCallerFails));
     }
 
     static FsResult Scan(string root, int workers, bool files = false, int top = 25, CancellationToken cancel = default, FindFirstFn? findFirst = null) =>
@@ -1449,6 +1476,7 @@ static partial class FsSelfTests
             AssertEqual(0L, result.Counters.Unreadable + result.Counters.ReparseSkipped, $"{label}: nothing skipped");
             AssertEqual(tree.Root, result.Root.Path, $"{label}: root path");
             AssertEqual(result.Metrics.Total, result.Metrics.PhaseSum, $"{label}: phases add up to the total");
+            Assert(result.Metrics.Other >= TimeSpan.Zero && result.Metrics.Walk <= result.Metrics.Total, $"{label}: the residual is not negative and the walk fits in the total");
 
             // Distinct file sizes, so the order is fully defined.
             AssertEqual("7011,5049,5048,5047,5046", string.Join(',', Sizes(result.Files)), $"{label}: largest files");
@@ -1458,6 +1486,13 @@ static partial class FsSelfTests
             AssertEqual("251225,7011,4007,2003,1001", string.Join(',', Sizes(result.RootChildren)), $"{label}: root children");
             Assert(result.RootChildren[4].Path.EndsWith("\\a.bin"), $"{label}: a root-level file appears among the root's children");
         }
+
+        // The boundary of the bounded selections: one result each.
+        var single = Scan(tree.Root, 2, files: true, top: 1);
+        AssertEqual("7011", string.Join(',', Sizes(single.Files)), "top=1: the largest file");
+        AssertEqual(1, single.Directories.Length, "top=1: one directory");
+        AssertEqual(tree.Root, single.Directories[0].Path, "top=1: the root");
+        AssertEqual("251225", string.Join(',', Sizes(single.RootChildren)), "top=1: the largest root child");
     }
 
     static void WalkJunction()
@@ -1597,12 +1632,40 @@ static partial class FsSelfTests
         return count;
     }
 
+    // Find-first fails with ERROR_SHARING_VIOLATION (32) for the directory "bad" and is the real call for every other directory.
+    static void WalkFailedDirectory()
+    {
+        using var tree = new TempTree();
+        tree.MakeFile("ok\\f.bin", 111);
+        tree.MakeFile("bad\\g.bin", 222);
+        tree.MakeFile("z.bin", 5);
+        FindFirstResult FailBad(string pattern, ref Win32FindData data, bool largeFetch) =>
+            pattern.Contains("\\bad\\") ? new FindFirstResult(Win32Find.InvalidHandle, 32) : Win32Find.FindFirst(pattern, ref data, largeFetch);
+        foreach (var workers in new[] { 1, 4 })
+        {
+            var label = $"workers={workers}";
+            var result = Scan(tree.Root, workers, findFirst: FailBad);
+            AssertEqual(116L, result.Root.Size, $"{label}: everything except the failed directory is counted");
+            AssertEqual(result.Counters.Bytes, result.Root.Size, $"{label}: the total still equals the sum of the file sizes");
+            AssertEqual(1L, result.Counters.DirectoriesFailed, $"{label}: one failed directory");
+            AssertEqual(0L, result.Counters.DirectoriesDenied, $"{label}: and it is not counted as denied");
+            AssertEqual(2L, result.Counters.DirectoriesScanned, $"{label}: the root and ok were read");
+            AssertEqual(3L, result.Counters.Directories, $"{label}: the failed directory is still a node");
+            AssertEqual(1, result.ErrorSamples.Length, $"{label}: one error sample");
+            Assert(result.ErrorSamples[0].Contains("\\bad") && result.ErrorSamples[0].Contains("error 32"), $"{label}: the sample names the directory and the error: {result.ErrorSamples[0]}");
+        }
+    }
+
     static void WalkBadRoot()
     {
         using var tree = new TempTree();
         tree.MakeFile("a.bin", 1);
         AssertThrows<ArgumentException>(() => Scan(tree.Root + "\\missing", 2), "missing directory");
         AssertThrows<ArgumentException>(() => Scan(tree.Root + "\\a.bin", 2), "a file is not a directory");
+        // No worker would read anything and the result would look like an empty tree.
+        AssertThrows<ArgumentException>(() => Scan(tree.Root, 0), "zero workers");
+        AssertThrows<ArgumentException>(() => Scan(tree.Root, -1), "a negative number of workers");
+        AssertEqual(ReadOutcome.NotRead, default(ReadResult).Outcome, "a read result that was never filled in is not a success");
     }
 
     static void WalkCanceled()
@@ -1611,13 +1674,61 @@ static partial class FsSelfTests
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
         AssertThrows<OperationCanceledException>(() => Scan(tree.Root, 4, cancel: canceled.Token), "canceled token");
+
+        // Canceled while the walk is running: every find-first call is slow, so the workers are busy or waiting when the token fires.
+        FindFirstResult Slow(string pattern, ref Win32FindData data, bool largeFetch)
+        {
+            Thread.Sleep(40);
+            return Win32Find.FindFirst(pattern, ref data, largeFetch);
+        }
+        using var late = new CancellationTokenSource();
+        late.CancelAfter(150);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        AssertThrows<OperationCanceledException>(() => Scan(tree.Root, 4, cancel: late.Token, findFirst: Slow), "canceled while running");
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+        Assert(elapsed < TimeSpan.FromSeconds(10), $"the walk stopped promptly after the cancel ({elapsed.TotalSeconds:N1} s)");
     }
 
     static void WalkWorkerThrows()
     {
         using var tree = StandardTree();
         FindFirstResult Boom(string pattern, ref Win32FindData data, bool largeFetch) => throw new InvalidOperationException("boom");
-        AssertThrows<InvalidOperationException>(() => Scan(tree.Root, 4, findFirst: Boom), "an exception in a worker reaches the caller and does not hang the walk");
+        try
+        {
+            Scan(tree.Root, 4, findFirst: Boom);
+            throw new Exception("an exception in a worker must reach the caller, but nothing was thrown");
+        }
+        catch (InvalidOperationException exception)
+        {
+            AssertEqual("boom", exception.Message, "the worker's own exception reaches the caller (and the walk does not hang)");
+        }
+    }
+
+    // If Walker.Run is left early (here: the progress callback throws) no worker may go on walking in the background.
+    static void WalkStopsWorkersWhenTheCallerFails()
+    {
+        using var tree = StandardTree();
+        var calls = 0;
+        FindFirstResult Slow(string pattern, ref Win32FindData data, bool largeFetch)
+        {
+            Interlocked.Increment(ref calls);
+            Thread.Sleep(100);
+            return Win32Find.FindFirst(pattern, ref data, largeFetch);
+        }
+        var root = new DirNode(0, -1, tree.Root);
+        try
+        {
+            new Walker(Slow).Run(root, tree.Base, 2, 5, false, default, (directories, files) => throw new InvalidOperationException("progress failed"));
+            throw new Exception("the failing progress callback must reach the caller, but nothing was thrown");
+        }
+        catch (InvalidOperationException exception)
+        {
+            AssertEqual("progress failed", exception.Message, "the callback's exception reaches the caller");
+        }
+        var atThrow = Volatile.Read(ref calls);
+        Thread.Sleep(500);
+        AssertEqual(atThrow, Volatile.Read(ref calls), "no worker is still walking after Run has thrown");
+        Assert(atThrow < 65, $"the walk was cut short ({atThrow} of 65 directories were read)");
     }
 }
 ```
@@ -1884,26 +1995,43 @@ sealed class Walker(FindFirstFn? findFirst = null)
         {
             var worker = new Worker(this, queue, reader, top, collectFiles);
             all.Add(worker);
-            threads.Add(new Thread(worker.Run) { Name = $"dirsizer-worker-{index}" });
+            // Background threads: if Run is left early, the workers must not keep the process alive.
+            threads.Add(new Thread(worker.Run) { Name = $"dirsizer-worker-{index}", IsBackground = true });
         }
         queue.Seed(root, rootExtendedPath);
         using var registration = cancel.Register(queue.Cancel);
 
         var start = Stopwatch.GetTimestamp();
-        foreach (var thread in threads) thread.Start();
-        foreach (var thread in threads)
+        var started = 0;
+        try
         {
-            while (!thread.Join(250))
+            foreach (var thread in threads)
             {
-                if (progress is null) continue;
-                long directoriesSoFar = 0, filesSoFar = 0;
-                foreach (var worker in all)
-                {
-                    directoriesSoFar += Volatile.Read(ref worker.Counters.Scanned) + Volatile.Read(ref worker.Counters.Denied) + Volatile.Read(ref worker.Counters.Failed);
-                    filesSoFar += Volatile.Read(ref worker.Counters.Files);
-                }
-                progress(directoriesSoFar, filesSoFar);
+                thread.Start();
+                started++;
             }
+            foreach (var thread in threads)
+            {
+                while (!thread.Join(250))
+                {
+                    if (progress is null) continue;
+                    long directoriesSoFar = 0, filesSoFar = 0;
+                    foreach (var worker in all)
+                    {
+                        directoriesSoFar += Volatile.Read(ref worker.Counters.Scanned) + Volatile.Read(ref worker.Counters.Denied) + Volatile.Read(ref worker.Counters.Failed);
+                        filesSoFar += Volatile.Read(ref worker.Counters.Files);
+                    }
+                    progress(directoriesSoFar, filesSoFar);
+                }
+            }
+        }
+        catch
+        {
+            // A thread that could not be started, or a progress callback that threw: nobody may be left walking. Stop the workers,
+            // wait for the ones that did start, and let the exception go on.
+            queue.Cancel();
+            for (var index = 0; index < started; index++) threads[index].Join();
+            throw;
         }
         var walkTime = Stopwatch.GetElapsedTime(start);
 
@@ -1985,9 +2113,11 @@ readonly record struct RootChild(DirNode? Directory, FileHit File);
 
 static class FsScanner
 {
-    // Throws ArgumentException (bad or missing root), IOException (root cannot be read), OperationCanceledException.
+    // Throws ArgumentException (bad settings, bad or missing root), IOException (root cannot be read), OperationCanceledException.
     public static FsResult Scan(string rootArgument, ScanSettings settings)
     {
+        // With no worker nothing would be read; the walk would end at once and the result would look like an empty tree.
+        if (settings.Workers < 1) throw new ArgumentOutOfRangeException(nameof(settings), "The number of workers must be at least 1.");
         var total = Stopwatch.StartNew();
         var allocatedAtStart = GC.GetTotalAllocatedBytes();
 
@@ -1999,8 +2129,17 @@ static class FsScanner
         Action<long, long>? progress = settings.ShowProgress
             ? (directories, files) => Console.Error.Write($"\rScanning: {directories:N0} directories, {files:N0} files")
             : null;
-        var walk = new Walker(settings.FindFirst).Run(root, rootPath.Extended, settings.Workers, settings.Top, settings.CollectFiles, settings.Cancel, progress);
-        if (settings.ShowProgress) Console.Error.Write("\r" + new string(' ', 60) + "\r");
+        WalkResult walk;
+        try
+        {
+            walk = new Walker(settings.FindFirst).Run(root, rootPath.Extended, settings.Workers, settings.Top, settings.CollectFiles, settings.Cancel, progress);
+        }
+        finally
+        {
+            // Also when the walk failed or was canceled: the error message must not follow a half-written progress line.
+            if (settings.ShowProgress) Console.Error.Write("\r" + new string(' ', 60) + "\r");
+        }
+        if (walk.RootRead.Outcome == ReadOutcome.NotRead) throw new InvalidOperationException("The root directory was never read (internal error).");
         if (walk.RootRead.Outcome != ReadOutcome.Complete)
         {
             var hint = walk.RootRead.Outcome == ReadOutcome.Denied ? " Choose a directory you can read, or start the tool from an elevated terminal." : "";
@@ -2058,7 +2197,7 @@ dotnet build src\DirSizer.Fs\DirSizer.Fs.csproj -c Release 2>&1 | Select-Object 
 dotnet artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll --self-test
 ```
 
-Expected: `0 Warning(s)`, `0 Error(s)`; all ten walk tests are `ok` and the last line is `23 self-tests passed, 0 skipped.` The wide fan-out test also prints two informational lines, `workers=1: peak_queued_dirs=10000, peak_working_set=<n> MiB` and the same for 8 workers (the prototype: 10000 and about 35-40 MiB in the JIT build). If a `walk skips a directory it may not read` line reads `skip`, your shell ignores the deny ACL (see Ground rules); the count is then `22 passed, 1 skipped`.
+Expected: `0 Warning(s)`, `0 Error(s)`; all twelve walk tests are `ok` and the last line is `25 self-tests passed, 0 skipped.` The wide fan-out test also prints two informational lines, `workers=1: peak_queued_dirs=10000, peak_working_set=<n> MiB` and the same for 8 workers (the prototype: 10000 and about 35-40 MiB in the JIT build). If a `walk skips a directory it may not read` line reads `skip`, your shell ignores the deny ACL (see Ground rules); the count is then `24 passed, 1 skipped`.
 
 - [ ] **Step 5: Commit**
 
@@ -2284,7 +2423,7 @@ dotnet build src\DirSizer.Fs\DirSizer.Fs.csproj -c Release 2>&1 | Select-Object 
 dotnet artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll --self-test | Select-Object -Last 5
 ```
 
-Expected: `0 Warning(s)`, `0 Error(s)`; the last lines show `ok    text output has the tables and the summary`, `ok    JSON output has the documented fields`, `ok    unreadable directories give a warning, the counters and the error samples` and `26 self-tests passed, 0 skipped.`
+Expected: `0 Warning(s)`, `0 Error(s)`; the last lines show `ok    text output has the tables and the summary`, `ok    JSON output has the documented fields`, `ok    unreadable directories give a warning, the counters and the error samples` and `28 self-tests passed, 0 skipped.`
 
 - [ ] **Step 5: Commit**
 
@@ -2366,7 +2505,7 @@ $exe = (Resolve-Path ".\artifacts\publish\DirSizer.Fs\release_win-x64\dirsizer.e
 & $exe --self-test | Select-Object -Last 1; "exit: $LASTEXITCODE"
 ```
 
-Expected: no publish errors, `26 self-tests passed, 0 skipped.` and `exit: 0`.
+Expected: no publish errors, `28 self-tests passed, 0 skipped.` and `exit: 0`.
 
 - [ ] **Step 3: Command-line behaviour**
 
@@ -2419,7 +2558,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 
 ### Task 7: Mutation checks
 
-The repo's convention is that a test that guards something important is shown to fail when the guarded code is deliberately broken. Do the following six mutations, one at a time. Each: edit, build, run, confirm the named test fails, then restore with `git checkout`.
+The repo's convention is that a test that guards something important is shown to fail when the guarded code is deliberately broken. Do the following eight mutations, one at a time. Each: edit, build, run, confirm the named test fails, then restore with `git checkout`.
 
 The restore command is always `git checkout -- <file>`. The files are committed, so this is safe; run `git status --short` after each restore and expect it to be empty.
 
@@ -2431,8 +2570,10 @@ The restore command is always `git checkout -- <file>`. The files are committed,
 | M4 | `src\DirSizer.Fs\DirectoryReader.cs` | change `if (first.Handle != Win32Find.InvalidHandle) _largeFetch = false;` to `_largeFetch = false;` | `LARGE_FETCH: a failing retry is an ordinary failure and keeps the flag` |
 | M5 | `src\DirSizer.Fs\Walker.cs` | in `WorkQueue.Finish`, delete the line `_peakQueued = Math.Max(_peakQueued, _stack.Count);` | `walk finishes on a very wide fan-out and reports the queue peak` |
 | M6 | `src\DirSizer.Fs\Walker.cs` | in `Worker.OnEntry`, change `Counters.Bytes += size;` to `Counters.Bytes += size + 1;` | `walk matches the independent oracle...` (the root total no longer equals the sum of file sizes) |
+| M7 | `src\DirSizer.Fs\FsScanner.cs` | change `if (settings.Workers < 1) throw` to `if (false) throw` | `walk reports a bad root or bad settings as an error` (the internal "never read" check then fires instead of the argument error) |
+| M8 | `src\DirSizer.Fs\Walker.cs` | in `Walker.Run`, in the `catch` block, delete the `queue.Cancel();` line and the `for (...) threads[index].Join();` line so that only `throw;` remains | `walk leaves no worker running when the caller fails` (this mutation leaves the workers walking in the background; the run still ends, because the workers are background threads) |
 
-- [ ] **Step 1: For each mutation M1 to M6**
+- [ ] **Step 1: For each mutation M1 to M8**
 
 Apply the change with the Edit tool, then:
 
@@ -2452,7 +2593,7 @@ dotnet build src\DirSizer.Fs\DirSizer.Fs.csproj -c Release 2>&1 | Select-Object 
 dotnet artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll --self-test | Select-Object -Last 1
 ```
 
-Expected: `0 Warning(s)`, `0 Error(s)` and `26 self-tests passed, 0 skipped.` No commit is needed (nothing changed).
+Expected: `0 Warning(s)`, `0 Error(s)` and `28 self-tests passed, 0 skipped.` No commit is needed (nothing changed).
 
 ---
 
@@ -3103,8 +3244,8 @@ Specified in [design_fs.md](design_fs.md). Independent of `DirSizer.Core`; none 
 
 - [x] `src\DirSizer.Fs` (`dirsizer.exe`): `FindFirstFileExW` with `FindExInfoBasic` and `LARGE_FETCH`, no per-file open, extended-length paths, reparse-point directories not entered, access denied skipped and counted, `--strict` exit 3, `asInvoker` manifest.
 - [x] Parallel walk: dedicated threads, one shared LIFO stack (intentionally unbounded; peak queue measured), `pending` counter for termination, directory ids allocated at discovery so `ParentId < Id`, aggregation as one reverse loop.
-- [x] `--self-test` (26 tests, JIT and NativeAOT builds): independent-oracle comparison for 1, 3 and 8 workers (nested and empty directories, zero-byte file, Unicode names, a path over 260 characters), junction, hard link, deny ACL, an 800-deep chain, a 10,000-wide fan-out (peak queued directories 10,000), the LARGE_FETCH fallback, the classification of find-first errors (missing, empty, denied, other), cancellation, a throwing worker, output and JSON.
-- [x] Mutation checks (six deliberate breakages, each made its named test fail).
+- [x] `--self-test` (28 tests, JIT and NativeAOT builds): independent-oracle comparison for 1, 3 and 8 workers (nested and empty directories, zero-byte file, Unicode names, a path over 260 characters), junction, hard link, deny ACL, an 800-deep chain, a 10,000-wide fan-out (peak queued directories 10,000), the LARGE_FETCH fallback, the classification of find-first errors (missing, empty, denied, other), a failing directory in the middle of a walk, cancellation before and during a walk, a throwing worker, a failing caller (no worker left running), rejected settings, output and JSON.
+- [x] Mutation checks (eight deliberate breakages, each made its named test fail).
 - [x] `scripts\Compare-Fs.ps1 -Oracle` on `src\`: root and every direct child equal to the framework's enumeration.
 - [x] `scripts\Compare-Fs.ps1 -Bulk` on the `T:` fixture against `dirsizer-bulk`: every difference explained by hard links, NTFS metadata, a directory that cannot be read, or a reparse-point directory that bulk lists (see design_fs.md); nothing unexplained.
 - [x] Worker sweep, `C:` (4 logical processors, warm cache, about 228,000 directories and 785,000 files): 1 worker 42 s, 4 workers 19 s (2.2x), 8 workers 18 s, 16 workers 19 s. Workers spent nearly all their time inside the enumeration calls; the shared lock was not the limit. Default `min(ProcessorCount, 8)` kept. One machine, one volume.
@@ -3160,7 +3301,7 @@ dotnet .\artifacts\bin\DirSizer.Inspect\release_win-x64\dirsizer-inspect.dll --s
 dotnet .\artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll --self-test | Select-Object -Last 1
 ```
 
-Expected: the `git diff --stat` prints **nothing**; the solution builds with `0 Error(s)`; the three existing self-tests give the same result as in Task 0 Step 2; the last line is `26 self-tests passed, 0 skipped.` Skipped must be 0 here: run from an unrestricted PowerShell.
+Expected: the `git diff --stat` prints **nothing**; the solution builds with `0 Error(s)`; the three existing self-tests give the same result as in Task 0 Step 2; the last line is `28 self-tests passed, 0 skipped.` Skipped must be 0 here: run from an unrestricted PowerShell.
 
 - [ ] **Step 2: The release package**
 
@@ -3183,7 +3324,7 @@ foreach ($name in 'dirsizer.exe', 'dirsizer-bulk.exe', 'dirsizer-fsctl.exe', 'di
 & (Join-Path $out 'dirsizer.exe') --self-test | Select-Object -Last 1
 ```
 
-Expected: four executables plus `README.md`, `README-jp.md`, `LICENSE`; `dirsizer.exe` shows `asInvoker=True requireAdministrator=False`, and each of the three NTFS tools shows `asInvoker=False requireAdministrator=True` (this is also the positive control for the check); the last line is `26 self-tests passed, 0 skipped.` Remove the temporary folder afterwards: `[IO.Directory]::Delete($out, $true)`.
+Expected: four executables plus `README.md`, `README-jp.md`, `LICENSE`; `dirsizer.exe` shows `asInvoker=True requireAdministrator=False`, and each of the three NTFS tools shows `asInvoker=False requireAdministrator=True` (this is also the positive control for the check); the last line is `28 self-tests passed, 0 skipped.` Remove the temporary folder afterwards: `[IO.Directory]::Delete($out, $true)`.
 
 - [ ] **Step 3: Report**
 

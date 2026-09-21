@@ -153,7 +153,8 @@ DirNode
   always produced, whereas the per-worker file heaps (see **Files** above) exist only with `--files`. No file
   entries are retained beyond a heap, not even for the root: pointing the tool at a directory with
   millions of files must not retain them. (The NTFS tools list all direct children before the top-N
-  filter; this tool limits `root_children` to `--top`, a deliberate difference.)
+  filter; this tool limits `root_children` to `--top`, a deliberate difference.) Files of size 0 are
+  never root children, while directories with a total of 0 can be.
 - Paths are built at output time, only for the selected results, by walking `ParentId` up to the
   root. Reparse directories that were skipped are not nodes.
 - Order among entries of equal size is unspecified and can differ between runs and worker counts;
@@ -171,7 +172,8 @@ DirNode
 | `FindNextFileW` fails with anything but `ERROR_NO_MORE_FILES` | the directory keeps the entries read so far and is counted in `directories_failed` |
 | Unknown option, bad number | `error: ...`, exit 1 |
 
-A denied or failed directory contributes nothing, so the totals are then a lower bound; a warning line
+A denied directory contributes nothing, and a directory that failed part-way contributes only what
+was read before it failed, so the totals are then a lower bound; a warning line
 says so on stderr and the counters are always printed. **Exit codes**: 0 = result produced; 1 =
 error, no result; 3 = only with `--strict`: the result was produced but at least one directory was
 denied or failed (same meaning as `dirsizer-bulk`'s exit 3: complete output, not a complete scan).
@@ -243,8 +245,10 @@ Phases are wall-clock and exhaustive, with the same rule as the NTFS tools: `ope
 `other` (the residual), `total`; the runtime checks `phase_sum == total`.
 
 Work happens in parallel inside `walk`, so its parts cannot be added up as wall time. They are
-reported separately as **summed worker time**: `enum_ms_total` (inside `FindFirstFileExW` /
-`FindNextFileW` / `FindClose`) and `idle_ms_total` (waiting for a task). These are diagnostics, not
+reported separately as **summed worker time**: `enum_ms_total` (reading directories: the
+`FindFirstFileExW` / `FindNextFileW` / `FindClose` calls plus the per-entry accounting that runs while
+they are open, that is creating nodes and names and updating the heaps; timing each native call
+separately would cost more than it measures) and `idle_ms_total` (waiting for a task). These are diagnostics, not
 phases. Also reported: `workers`, `large_fetch` (on/off), `peak_queued_dirs`, managed allocation,
 peak working set,
 `entries_per_sec` and `directories_per_sec` (over `walk`), and `logical_mib_per_sec`
@@ -281,6 +285,17 @@ Self-test (uses a temporary directory that is removed afterwards):
    number of failing calls is at most 8, `large_fetch` reports off, and the totals are correct. A
    second case: `ERROR_INVALID_PARAMETER` returned for a call without `LARGE_FETCH` is counted in
    `directories_failed` and is not retried.
+
+7. **A failing directory in the middle of a walk** (find-first injected to fail for one directory with
+   1 and with 4 workers): counted in `directories_failed` with an error sample, everything else
+   counted, `bytes` still equal to `root.size`. **Cancellation while running** (slow find-first, token
+   fired mid-walk) and **a caller that fails** (the progress callback throws): the walk stops promptly
+   and no worker is left walking. **Settings**: zero or negative workers are rejected, and a read
+   result that was never filled in is not a success.
+8. **Each test has a time limit** (120 s) so that a deadlock fails the run instead of hanging it.
+
+Known gap: a `FindNextFileW` failure half-way through a directory is not tested, because the
+injection seam covers only the first call.
 
 Real volumes (manual, recorded in the roadmap):
 
