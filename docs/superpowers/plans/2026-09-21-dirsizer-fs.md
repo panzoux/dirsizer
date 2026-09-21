@@ -203,7 +203,9 @@ static partial class FsSelfTests
             catch (Exception exception)
             {
                 failed++;
-                Console.WriteLine($"FAIL  {test.Name}: {exception.Message}");
+                // A failed assertion is a plain Exception; anything else is a surprise, so its type is worth seeing.
+                var text = exception.GetType() == typeof(Exception) ? exception.Message : $"{exception.GetType().Name}: {exception.Message}";
+                Console.WriteLine($"FAIL  {test.Name}: {text}");
             }
         }
         Console.WriteLine(failed == 0
@@ -328,9 +330,9 @@ static partial class FsSelfTests
 {
     static partial void AddReaderTests(List<SelfTest> tests)
     {
-        tests.Add(new("Win32FindData has the 592-byte native layout", Win32FindDataLayout));
+        tests.Add(new("Win32FindData has the 592-byte native layout and a 64-bit file size", Win32FindDataLayout));
         tests.Add(new("reader lists entries, skips . and .., reports names and attributes", ReaderListsEntries));
-        tests.Add(new("reader reports a missing directory as failed", ReaderMissingDirectory));
+        tests.Add(new("reader classifies find-first errors: missing, empty, denied, other", ReaderClassifiesErrors));
         tests.Add(new("LARGE_FETCH: rejected once, retried without, and off from then on", LargeFetchFallsBack));
         tests.Add(new("LARGE_FETCH: a failing retry is an ordinary failure and keeps the flag", LargeFetchKeptWhenRetryFails));
     }
@@ -339,13 +341,39 @@ static partial class FsSelfTests
     {
         // 4 (attributes) + 3 * 8 (times) + 4 * 4 (sizes, reserved) + 260 * 2 (name) + 14 * 2 (alternate name)
         AssertEqual(592, Unsafe.SizeOf<Win32FindData>(), "WIN32_FIND_DATAW size");
+        // The two halves of the size combine into 64 bits (a file over 4 GiB), without needing a huge file.
+        var data = new Win32FindData { FileSizeHigh = 1, FileSizeLow = 5 };
+        AssertEqual(4294967301L, Win32Find.FileSize(in data), "64-bit file size");
     }
 
     sealed class CollectingSink : IEntrySink
     {
         public readonly Dictionary<string, uint> Entries = [];
+        public readonly Dictionary<string, long> Sizes = [];
 
-        public void OnEntry(in Win32FindData entry) => Entries[Win32Find.NameString(in entry)] = entry.FileAttributes;
+        public void OnEntry(in Win32FindData entry)
+        {
+            var name = Win32Find.NameString(in entry);
+            Entries[name] = entry.FileAttributes;
+            Sizes[name] = Win32Find.FileSize(in entry);
+        }
+    }
+
+    // A find-first call that always fails with the given error, recording whether the LARGE_FETCH flag was set on each call.
+    static FindFirstFn AlwaysFails(int error, List<bool> calls) =>
+        (string pattern, ref Win32FindData data, bool largeFetch) =>
+        {
+            calls.Add(largeFetch);
+            return new FindFirstResult(Win32Find.InvalidHandle, error);
+        };
+
+    static ReadResult ReadWithError(int error, out string calls)
+    {
+        var list = new List<bool>();
+        var data = new Win32FindData();
+        var result = new DirectoryReader(AlwaysFails(error, list)).Read(@"\\?\C:\anything", ref data, new CollectingSink());
+        calls = string.Join(',', list);
+        return result;
     }
 
     // Stands in for a filesystem that rejects FIND_FIRST_EX_LARGE_FETCH with the given error; every other call is the real one.
@@ -377,6 +405,8 @@ static partial class FsSelfTests
         Assert((sink.Entries["sub"] & Win32Find.DirectoryAttribute) != 0, "sub is a directory");
         Assert((sink.Entries["one.txt"] & Win32Find.DirectoryAttribute) == 0, "one.txt is not a directory");
         Assert((sink.Entries["hidden.txt"] & (uint)FileAttributes.Hidden) != 0, "hidden files are listed, with their attribute");
+        AssertEqual(10L, sink.Sizes["one.txt"], "size of one.txt (the size fields are read from the right offsets)");
+        AssertEqual(20L, sink.Sizes["日本語.txt"], "size of the Unicode-named file");
     }
 
     static string[] SortedNames(Dictionary<string, uint> entries)
@@ -386,13 +416,26 @@ static partial class FsSelfTests
         return names.ToArray();
     }
 
-    static void ReaderMissingDirectory()
+    static void ReaderClassifiesErrors()
     {
         using var tree = new TempTree();
         var data = new Win32FindData();
-        var result = new DirectoryReader().Read(tree.Full("does-not-exist"), ref data, new CollectingSink());
-        AssertEqual(ReadOutcome.Failed, result.Outcome, "outcome");
-        Assert(result.Error is 2 or 3, $"expected ERROR_FILE_NOT_FOUND or ERROR_PATH_NOT_FOUND, got {result.Error}");
+        var missing = new DirectoryReader().Read(tree.Full("does-not-exist"), ref data, new CollectingSink());
+        AssertEqual(ReadOutcome.Failed, missing.Outcome, "a directory that does not exist");
+        AssertEqual(3, missing.Error, "ERROR_PATH_NOT_FOUND");
+
+        var empty = ReadWithError(Win32Find.ErrorFileNotFound, out var emptyCalls);
+        AssertEqual(ReadOutcome.Complete, empty.Outcome, "ERROR_FILE_NOT_FOUND means an empty directory (a FAT or exFAT root has no dot entries)");
+        AssertEqual("True", emptyCalls, "an empty directory is not retried");
+
+        var denied = ReadWithError(Win32Find.ErrorAccessDenied, out var deniedCalls);
+        AssertEqual(ReadOutcome.Denied, denied.Outcome, "ERROR_ACCESS_DENIED");
+        AssertEqual("True", deniedCalls, "a denied directory is not retried");
+
+        var other = ReadWithError(32, out var otherCalls);   // ERROR_SHARING_VIOLATION
+        AssertEqual(ReadOutcome.Failed, other.Outcome, "any other error");
+        AssertEqual(32, other.Error, "the error is kept");
+        AssertEqual("True", otherCalls, "another error is not retried");
     }
 
     static void LargeFetchFallsBack()
@@ -506,6 +549,7 @@ static class Win32Find
 {
     public const uint DirectoryAttribute = 0x10;
     public const uint ReparsePointAttribute = 0x400;
+    public const int ErrorFileNotFound = 2;
     public const int ErrorAccessDenied = 5;
     public const int ErrorNoMoreFiles = 18;
     public const int ErrorInvalidParameter = 87;
@@ -556,7 +600,7 @@ static class Win32Find
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool FindNextFileW(nint hFindFile, ref Win32FindData lpFindFileData);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool FindClose(nint hFindFile);
 }
@@ -591,6 +635,10 @@ sealed class DirectoryReader(FindFirstFn? findFirst = null)
             first = _findFirst(pattern, ref data, false);
             if (first.Handle != Win32Find.InvalidHandle) _largeFetch = false;
         }
+        // A directory with no entries at all. The root of a FAT or exFAT volume has no "." or ".." entries, so listing an empty one
+        // fails with ERROR_FILE_NOT_FOUND: that is an empty directory, not a failure. (A path that does not exist gives ERROR_PATH_NOT_FOUND.)
+        if (first.Handle == Win32Find.InvalidHandle && first.Error == Win32Find.ErrorFileNotFound)
+            return new ReadResult(ReadOutcome.Complete, 0);
         if (first.Handle == Win32Find.InvalidHandle)
             return new ReadResult(first.Error == Win32Find.ErrorAccessDenied ? ReadOutcome.Denied : ReadOutcome.Failed, first.Error);
 
@@ -621,9 +669,9 @@ dotnet artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll --self-test
 Expected: `0 Warning(s)`, `0 Error(s)`, then
 
 ```
-ok    Win32FindData has the 592-byte native layout
+ok    Win32FindData has the 592-byte native layout and a 64-bit file size
 ok    reader lists entries, skips . and .., reports names and attributes
-ok    reader reports a missing directory as failed
+ok    reader classifies find-first errors: missing, empty, denied, other
 ok    LARGE_FETCH: rejected once, retried without, and off from then on
 ok    LARGE_FETCH: a failing retry is an ordinary failure and keeps the flag
 5 self-tests passed, 0 skipped.
@@ -2900,7 +2948,7 @@ Specified in [design_fs.md](design_fs.md). Independent of `DirSizer.Core`; none 
 
 - [x] `src\DirSizer.Fs` (`dirsizer.exe`): `FindFirstFileExW` with `FindExInfoBasic` and `LARGE_FETCH`, no per-file open, extended-length paths, reparse-point directories not entered, access denied skipped and counted, `--strict` exit 3, `asInvoker` manifest.
 - [x] Parallel walk: dedicated threads, one shared LIFO stack (intentionally unbounded; peak queue measured), `pending` counter for termination, directory ids allocated at discovery so `ParentId < Id`, aggregation as one reverse loop.
-- [x] `--self-test` (26 tests, JIT and NativeAOT builds): independent-oracle comparison for 1, 3 and 8 workers (nested and empty directories, zero-byte file, Unicode names, a path over 260 characters), junction, hard link, deny ACL, an 800-deep chain, a 10,000-wide fan-out (peak queued directories 10,000), the LARGE_FETCH fallback, cancellation, a throwing worker, output and JSON.
+- [x] `--self-test` (26 tests, JIT and NativeAOT builds): independent-oracle comparison for 1, 3 and 8 workers (nested and empty directories, zero-byte file, Unicode names, a path over 260 characters), junction, hard link, deny ACL, an 800-deep chain, a 10,000-wide fan-out (peak queued directories 10,000), the LARGE_FETCH fallback, the classification of find-first errors (missing, empty, denied, other), cancellation, a throwing worker, output and JSON.
 - [x] Mutation checks (six deliberate breakages, each made its named test fail).
 - [x] `scripts\Compare-Fs.ps1 -Oracle` on `src\`: root and every direct child equal to the framework's enumeration.
 - [x] `scripts\Compare-Fs.ps1 -Bulk` on the `T:` fixture against `dirsizer-bulk`: every difference explained by hard links, NTFS metadata, a directory that cannot be read, or a reparse-point directory that bulk lists (see design_fs.md); nothing unexplained.

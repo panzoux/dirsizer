@@ -86,7 +86,7 @@ FIND_FIRST_EX_LARGE_FETCH)`, then `FindNextFileW` until `ERROR_NO_MORE_FILES`, t
   that the API needs. Nothing is created per file except a name string for the few files that enter a
   top-N heap.
 - P/Invoke uses `DllImport` with a blittable `WIN32_FIND_DATAW` whose `cFileName` is an
-  `[InlineArray(260)]` of `char`, so the project keeps `AllowUnsafeBlocks=false` and the file name is
+  `[InlineArray(260)]` of `ushort` (read as `char` through a span; a `char` field would make the marshaller depend on the struct's `CharSet`), so the project keeps `AllowUnsafeBlocks=false` and the file name is
   read as a span with no per-entry allocation. (To be confirmed as the first step of the
   implementation, in the NativeAOT build; if it does not hold, the fallback is `AllowUnsafeBlocks`
   for this project only.)
@@ -165,6 +165,7 @@ DirNode
 | --- | --- |
 | Root does not exist / is not a directory | `error: ...`, exit 1 |
 | Root cannot be enumerated (access denied, etc.) | `error: ...`, exit 1 |
+| `FindFirstFileExW` fails with `ERROR_FILE_NOT_FOUND` | an empty directory, not an error: the root of a FAT or exFAT volume has no `.` or `..` entries, so listing an empty one fails this way (a path that does not exist gives `ERROR_PATH_NOT_FOUND`, which is a failure) |
 | A directory returns `ERROR_ACCESS_DENIED` | skipped, `directories_denied++` |
 | Any other failure of `FindFirstFileExW` on a directory (path vanished, sharing violation, network error) | skipped, `directories_failed++`, up to 20 error samples kept |
 | `FindNextFileW` fails with anything but `ERROR_NO_MORE_FILES` | the directory keeps the entries read so far and is counted in `directories_failed` |
