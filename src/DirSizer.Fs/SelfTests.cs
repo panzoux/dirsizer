@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 
 // The built-in tests (dirsizer --self-test). They need no elevation and no volume: file-system tests build a fixture in a
 // temporary folder and remove it afterwards. Each group of tests lives in its own file and registers itself through one of
@@ -33,7 +34,7 @@ static partial class FsSelfTests
         {
             try
             {
-                test.Body();
+                RunWithTimeout(test);
                 Console.WriteLine($"ok    {test.Name}");
             }
             catch (SkipException skip)
@@ -53,6 +54,29 @@ static partial class FsSelfTests
             ? $"{tests.Count - skipped} self-tests passed, {skipped} skipped."
             : $"{failed} of {tests.Count} self-tests FAILED.");
         return failed == 0 ? 0 : 1;
+    }
+
+    static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(120);
+
+    // A test that hangs (a deadlock in the walk would) must fail, not stop the whole run. The body runs on its own background
+    // thread; if it does not finish in time the test fails and the run goes on.
+    static void RunWithTimeout(SelfTest test)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                test.Body();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+        }) { IsBackground = true, Name = "self-test" };
+        thread.Start();
+        if (!thread.Join(TestTimeout)) throw new Exception($"timed out after {TestTimeout.TotalSeconds:N0} s (a hang or a deadlock)");
+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     static void Assert(bool condition, string message)

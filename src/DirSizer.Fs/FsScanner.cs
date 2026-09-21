@@ -39,9 +39,11 @@ readonly record struct RootChild(DirNode? Directory, FileHit File);
 
 static class FsScanner
 {
-    // Throws ArgumentException (bad or missing root), IOException (root cannot be read), OperationCanceledException.
+    // Throws ArgumentException (bad settings, bad or missing root), IOException (root cannot be read), OperationCanceledException.
     public static FsResult Scan(string rootArgument, ScanSettings settings)
     {
+        // With no worker nothing would be read; the walk would end at once and the result would look like an empty tree.
+        if (settings.Workers < 1) throw new ArgumentOutOfRangeException(nameof(settings), "The number of workers must be at least 1.");
         var total = Stopwatch.StartNew();
         var allocatedAtStart = GC.GetTotalAllocatedBytes();
 
@@ -53,8 +55,17 @@ static class FsScanner
         Action<long, long>? progress = settings.ShowProgress
             ? (directories, files) => Console.Error.Write($"\rScanning: {directories:N0} directories, {files:N0} files")
             : null;
-        var walk = new Walker(settings.FindFirst).Run(root, rootPath.Extended, settings.Workers, settings.Top, settings.CollectFiles, settings.Cancel, progress);
-        if (settings.ShowProgress) Console.Error.Write("\r" + new string(' ', 60) + "\r");
+        WalkResult walk;
+        try
+        {
+            walk = new Walker(settings.FindFirst).Run(root, rootPath.Extended, settings.Workers, settings.Top, settings.CollectFiles, settings.Cancel, progress);
+        }
+        finally
+        {
+            // Also when the walk failed or was canceled: the error message must not follow a half-written progress line.
+            if (settings.ShowProgress) Console.Error.Write("\r" + new string(' ', 60) + "\r");
+        }
+        if (walk.RootRead.Outcome == ReadOutcome.NotRead) throw new InvalidOperationException("The root directory was never read (internal error).");
         if (walk.RootRead.Outcome != ReadOutcome.Complete)
         {
             var hint = walk.RootRead.Outcome == ReadOutcome.Denied ? " Choose a directory you can read, or start the tool from an elevated terminal." : "";

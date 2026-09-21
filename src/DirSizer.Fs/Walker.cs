@@ -247,26 +247,43 @@ sealed class Walker(FindFirstFn? findFirst = null)
         {
             var worker = new Worker(this, queue, reader, top, collectFiles);
             all.Add(worker);
-            threads.Add(new Thread(worker.Run) { Name = $"dirsizer-worker-{index}" });
+            // Background threads: if Run is left early, the workers must not keep the process alive.
+            threads.Add(new Thread(worker.Run) { Name = $"dirsizer-worker-{index}", IsBackground = true });
         }
         queue.Seed(root, rootExtendedPath);
         using var registration = cancel.Register(queue.Cancel);
 
         var start = Stopwatch.GetTimestamp();
-        foreach (var thread in threads) thread.Start();
-        foreach (var thread in threads)
+        var started = 0;
+        try
         {
-            while (!thread.Join(250))
+            foreach (var thread in threads)
             {
-                if (progress is null) continue;
-                long directoriesSoFar = 0, filesSoFar = 0;
-                foreach (var worker in all)
-                {
-                    directoriesSoFar += Volatile.Read(ref worker.Counters.Scanned) + Volatile.Read(ref worker.Counters.Denied) + Volatile.Read(ref worker.Counters.Failed);
-                    filesSoFar += Volatile.Read(ref worker.Counters.Files);
-                }
-                progress(directoriesSoFar, filesSoFar);
+                thread.Start();
+                started++;
             }
+            foreach (var thread in threads)
+            {
+                while (!thread.Join(250))
+                {
+                    if (progress is null) continue;
+                    long directoriesSoFar = 0, filesSoFar = 0;
+                    foreach (var worker in all)
+                    {
+                        directoriesSoFar += Volatile.Read(ref worker.Counters.Scanned) + Volatile.Read(ref worker.Counters.Denied) + Volatile.Read(ref worker.Counters.Failed);
+                        filesSoFar += Volatile.Read(ref worker.Counters.Files);
+                    }
+                    progress(directoriesSoFar, filesSoFar);
+                }
+            }
+        }
+        catch
+        {
+            // A thread that could not be started, or a progress callback that threw: nobody may be left walking. Stop the workers,
+            // wait for the ones that did start, and let the exception go on.
+            queue.Cancel();
+            for (var index = 0; index < started; index++) threads[index].Join();
+            throw;
         }
         var walkTime = Stopwatch.GetElapsedTime(start);
 

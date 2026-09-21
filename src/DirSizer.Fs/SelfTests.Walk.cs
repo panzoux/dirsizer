@@ -16,9 +16,11 @@ static partial class FsSelfTests
         tests.Add(new("walk finishes on a very deep chain (1 and 8 workers)", WalkDeepChain));
         tests.Add(new("walk finishes on a very wide fan-out and reports the queue peak", WalkWideFanOut));
         tests.Add(new("walk with LARGE_FETCH rejected: one worker fails once, eight at most eight times", WalkLargeFetchRejected));
-        tests.Add(new("walk reports a bad root as an error", WalkBadRoot));
-        tests.Add(new("walk stops when canceled", WalkCanceled));
+        tests.Add(new("walk counts a directory that fails and keeps the rest", WalkFailedDirectory));
+        tests.Add(new("walk reports a bad root or bad settings as an error", WalkBadRoot));
+        tests.Add(new("walk stops when canceled, before and while it runs", WalkCanceled));
         tests.Add(new("walk stops and rethrows when a worker throws", WalkWorkerThrows));
+        tests.Add(new("walk leaves no worker running when the caller fails", WalkStopsWorkersWhenTheCallerFails));
     }
 
     static FsResult Scan(string root, int workers, bool files = false, int top = 25, CancellationToken cancel = default, FindFirstFn? findFirst = null) =>
@@ -106,6 +108,7 @@ static partial class FsSelfTests
             AssertEqual(0L, result.Counters.Unreadable + result.Counters.ReparseSkipped, $"{label}: nothing skipped");
             AssertEqual(tree.Root, result.Root.Path, $"{label}: root path");
             AssertEqual(result.Metrics.Total, result.Metrics.PhaseSum, $"{label}: phases add up to the total");
+            Assert(result.Metrics.Other >= TimeSpan.Zero && result.Metrics.Walk <= result.Metrics.Total, $"{label}: the residual is not negative and the walk fits in the total");
 
             // Distinct file sizes, so the order is fully defined.
             AssertEqual("7011,5049,5048,5047,5046", string.Join(',', Sizes(result.Files)), $"{label}: largest files");
@@ -115,6 +118,13 @@ static partial class FsSelfTests
             AssertEqual("251225,7011,4007,2003,1001", string.Join(',', Sizes(result.RootChildren)), $"{label}: root children");
             Assert(result.RootChildren[4].Path.EndsWith("\\a.bin"), $"{label}: a root-level file appears among the root's children");
         }
+
+        // The boundary of the bounded selections: one result each.
+        var single = Scan(tree.Root, 2, files: true, top: 1);
+        AssertEqual("7011", string.Join(',', Sizes(single.Files)), "top=1: the largest file");
+        AssertEqual(1, single.Directories.Length, "top=1: one directory");
+        AssertEqual(tree.Root, single.Directories[0].Path, "top=1: the root");
+        AssertEqual("251225", string.Join(',', Sizes(single.RootChildren)), "top=1: the largest root child");
     }
 
     static void WalkJunction()
@@ -254,12 +264,40 @@ static partial class FsSelfTests
         return count;
     }
 
+    // Find-first fails with ERROR_SHARING_VIOLATION (32) for the directory "bad" and is the real call for every other directory.
+    static void WalkFailedDirectory()
+    {
+        using var tree = new TempTree();
+        tree.MakeFile("ok\\f.bin", 111);
+        tree.MakeFile("bad\\g.bin", 222);
+        tree.MakeFile("z.bin", 5);
+        FindFirstResult FailBad(string pattern, ref Win32FindData data, bool largeFetch) =>
+            pattern.Contains("\\bad\\") ? new FindFirstResult(Win32Find.InvalidHandle, 32) : Win32Find.FindFirst(pattern, ref data, largeFetch);
+        foreach (var workers in new[] { 1, 4 })
+        {
+            var label = $"workers={workers}";
+            var result = Scan(tree.Root, workers, findFirst: FailBad);
+            AssertEqual(116L, result.Root.Size, $"{label}: everything except the failed directory is counted");
+            AssertEqual(result.Counters.Bytes, result.Root.Size, $"{label}: the total still equals the sum of the file sizes");
+            AssertEqual(1L, result.Counters.DirectoriesFailed, $"{label}: one failed directory");
+            AssertEqual(0L, result.Counters.DirectoriesDenied, $"{label}: and it is not counted as denied");
+            AssertEqual(2L, result.Counters.DirectoriesScanned, $"{label}: the root and ok were read");
+            AssertEqual(3L, result.Counters.Directories, $"{label}: the failed directory is still a node");
+            AssertEqual(1, result.ErrorSamples.Length, $"{label}: one error sample");
+            Assert(result.ErrorSamples[0].Contains("\\bad") && result.ErrorSamples[0].Contains("error 32"), $"{label}: the sample names the directory and the error: {result.ErrorSamples[0]}");
+        }
+    }
+
     static void WalkBadRoot()
     {
         using var tree = new TempTree();
         tree.MakeFile("a.bin", 1);
         AssertThrows<ArgumentException>(() => Scan(tree.Root + "\\missing", 2), "missing directory");
         AssertThrows<ArgumentException>(() => Scan(tree.Root + "\\a.bin", 2), "a file is not a directory");
+        // No worker would read anything and the result would look like an empty tree.
+        AssertThrows<ArgumentException>(() => Scan(tree.Root, 0), "zero workers");
+        AssertThrows<ArgumentException>(() => Scan(tree.Root, -1), "a negative number of workers");
+        AssertEqual(ReadOutcome.NotRead, default(ReadResult).Outcome, "a read result that was never filled in is not a success");
     }
 
     static void WalkCanceled()
@@ -268,12 +306,60 @@ static partial class FsSelfTests
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
         AssertThrows<OperationCanceledException>(() => Scan(tree.Root, 4, cancel: canceled.Token), "canceled token");
+
+        // Canceled while the walk is running: every find-first call is slow, so the workers are busy or waiting when the token fires.
+        FindFirstResult Slow(string pattern, ref Win32FindData data, bool largeFetch)
+        {
+            Thread.Sleep(40);
+            return Win32Find.FindFirst(pattern, ref data, largeFetch);
+        }
+        using var late = new CancellationTokenSource();
+        late.CancelAfter(150);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        AssertThrows<OperationCanceledException>(() => Scan(tree.Root, 4, cancel: late.Token, findFirst: Slow), "canceled while running");
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+        Assert(elapsed < TimeSpan.FromSeconds(10), $"the walk stopped promptly after the cancel ({elapsed.TotalSeconds:N1} s)");
     }
 
     static void WalkWorkerThrows()
     {
         using var tree = StandardTree();
         FindFirstResult Boom(string pattern, ref Win32FindData data, bool largeFetch) => throw new InvalidOperationException("boom");
-        AssertThrows<InvalidOperationException>(() => Scan(tree.Root, 4, findFirst: Boom), "an exception in a worker reaches the caller and does not hang the walk");
+        try
+        {
+            Scan(tree.Root, 4, findFirst: Boom);
+            throw new Exception("an exception in a worker must reach the caller, but nothing was thrown");
+        }
+        catch (InvalidOperationException exception)
+        {
+            AssertEqual("boom", exception.Message, "the worker's own exception reaches the caller (and the walk does not hang)");
+        }
+    }
+
+    // If Walker.Run is left early (here: the progress callback throws) no worker may go on walking in the background.
+    static void WalkStopsWorkersWhenTheCallerFails()
+    {
+        using var tree = StandardTree();
+        var calls = 0;
+        FindFirstResult Slow(string pattern, ref Win32FindData data, bool largeFetch)
+        {
+            Interlocked.Increment(ref calls);
+            Thread.Sleep(100);
+            return Win32Find.FindFirst(pattern, ref data, largeFetch);
+        }
+        var root = new DirNode(0, -1, tree.Root);
+        try
+        {
+            new Walker(Slow).Run(root, tree.Base, 2, 5, false, default, (directories, files) => throw new InvalidOperationException("progress failed"));
+            throw new Exception("the failing progress callback must reach the caller, but nothing was thrown");
+        }
+        catch (InvalidOperationException exception)
+        {
+            AssertEqual("progress failed", exception.Message, "the callback's exception reaches the caller");
+        }
+        var atThrow = Volatile.Read(ref calls);
+        Thread.Sleep(500);
+        AssertEqual(atThrow, Volatile.Read(ref calls), "no worker is still walking after Run has thrown");
+        Assert(atThrow < 65, $"the walk was cut short ({atThrow} of 65 directories were read)");
     }
 }

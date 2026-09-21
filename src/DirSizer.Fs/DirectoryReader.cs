@@ -1,4 +1,5 @@
-enum ReadOutcome { Complete, Denied, Failed }
+// NotRead is the default value on purpose: a result that was never filled in must not look like a successful read.
+enum ReadOutcome { NotRead, Complete, Denied, Failed }
 
 readonly record struct ReadResult(ReadOutcome Outcome, int Error);
 
