@@ -1,5 +1,7 @@
 # C# NTFS Folder Size Scanner Spec
 
+> This document specifies the NTFS tools (`dirsizer-bulk`, `dirsizer-fsctl`, `dirsizer-inspect`). The general-purpose `dirsizer.exe` (directory enumeration, any filesystem, no elevation) is specified in [design_fs.md](design_fs.md). Statements below such as "no recursive fallback scanning", "NTFS only" and "administrative privileges required" concern the NTFS tools only.
+
 ## Goal
 
 Build a fast, read-only Windows tool for analyzing folder sizes on NTFS volumes.

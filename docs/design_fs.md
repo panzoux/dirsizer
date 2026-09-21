@@ -343,6 +343,10 @@ in the *directory entry* of a name that was not used to write the file until tha
 If enumeration then shows a stale size for some hard-linked names, that is a limitation of the method
 and will be documented with the measured example.
 
+## Status
+
+Implemented as `src\DirSizer.Fs`; see P5 in [roadmap.md](roadmap.md) for what was verified and what was not.
+
 ## Deliverables of this work
 
 1. `src\DirSizer.Fs\` project (`AssemblyName` `dirsizer`, NativeAOT, its own `asInvoker` manifest),

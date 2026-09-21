@@ -3,11 +3,12 @@
     Builds, packages and optionally publishes a DirSizer GitHub release.
 
 .DESCRIPTION
-    Without -Publish, publishes the NativeAOT win-x64 executable and creates:
+    Without -Publish, publishes the four NativeAOT win-x64 executables and creates:
 
       dist\DirSizer-v<version>-win-x64.zip
 
-    The ZIP contains DirSizer.exe and README.md. With -Publish, the script also
+    The ZIP contains dirsizer.exe, dirsizer-fsctl.exe, dirsizer-bulk.exe,
+    dirsizer-inspect.exe, README.md, README-jp.md and LICENSE. With -Publish, the script also
     creates and pushes the v<version> tag and creates the GitHub release with
     the ZIP attached. Use -NotesFile to provide the release description.
 
@@ -32,8 +33,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-# The release contains three tools. Each is published as its own NativeAOT executable.
+# The release contains four tools. Each is published as its own NativeAOT executable.
 $Tools = @(
+    @{ Project = 'src\DirSizer.Fs\DirSizer.Fs.csproj';           Exe = 'dirsizer.exe' },
     @{ Project = 'src\DirSizer.Fsctl\DirSizer.Fsctl.csproj';     Exe = 'dirsizer-fsctl.exe' },
     @{ Project = 'src\DirSizer.Bulk\DirSizer.Bulk.csproj';       Exe = 'dirsizer-bulk.exe' },
     @{ Project = 'src\DirSizer.Inspect\DirSizer.Inspect.csproj'; Exe = 'dirsizer-inspect.exe' }

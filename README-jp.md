@@ -10,23 +10,24 @@ DirSizer は MIT ライセンスの下で公開されています。詳細は [L
 
 ## ステータス
 
-現在、初期の実用版（ベースライン）です。NTFS ボリュームの MFT を直接読み込む設計になっており、`FindFirstFile` や `Directory.EnumerateFiles` によるパス走査、および USN ジャーナルは使用していません。
+現在、初期の実用版（ベースライン）です。NTFS 向けの 3 つのツール（`dirsizer-bulk`、`dirsizer-fsctl`、`dirsizer-inspect`）は NTFS ボリュームの MFT を直接読み込む設計になっており、`FindFirstFile` や `Directory.EnumerateFiles` によるパス走査、および USN ジャーナルは使用していません。`dirsizer.exe` はその汎用版で、`FindFirstFileExW` で任意のファイルシステムのディレクトリを走査し、管理者権限を必要としません。
 
 ## 構成ツール
 
-DirSizer は、用途に応じた 3 つの独立した実行ファイルで構成されています。
+DirSizer は、用途に応じた 4 つの独立した実行ファイルで構成されています。
 
 | ツール | 用途 | 備考 |
 | --- | --- | --- |
+| `dirsizer.exe` | **任意の**ファイルシステムのフォルダーサイズスキャン（管理者権限不要） | `FindFirstFileExW` で複数スレッドを使ってディレクトリ一覧を読み取り、個々のファイルは開きません。NTFS では `dirsizer-bulk` より遅く、合計値も NTFS 向けツールとは仕様上異なります。下の「dirsizer.exe」節と [docs/design_fs.md](docs/design_fs.md)（英語）を参照してください。 |
 | `dirsizer-bulk.exe` | 高速フォルダーサイズスキャン | **【実験的機能】** `$MFT` を大容量ブロック単位で直接読み込みます。検証環境では `dirsizer-fsctl` より約 1.4 倍高速に動作しました。 |
 | `dirsizer-fsctl.exe` | 同上のフォルダーサイズスキャン | `FSCTL_GET_NTFS_FILE_RECORD` を使用するリファレンス実装です。`dirsizer-bulk` の動作検証、ベンチマーク、または安全性を重視する環境で使用します。 |
 | `dirsizer-inspect.exe` | NTFS `$MFT` 内部構造の解析 | 開発・調査用ツール。単一レコードの属性解析、`$MFT` エクステント、スロット数の確認、Raw 読み込みと FSCTL の比較などを行います（サイズ集計機能はありません）。 |
 
-`dirsizer-bulk` と `dirsizer-fsctl` は同じコマンドラインオプションを受け付け、同一の結果を出力します。環境に合わせて選択してください（片方が失敗した場合の自動フォールバック機能はありません）。詳細なオプションは各コマンドの `--help` で確認できます（`dirsizer-inspect --help` が最も詳細です）。
+`dirsizer-bulk` と `dirsizer-fsctl` は同じコマンドラインオプションを受け付け、同一の結果を出力します。`dirsizer.exe` は独自のオプション（`--workers`、`--strict`）を持ちます。環境に合わせて選択してください（片方が失敗した場合の自動フォールバック機能はありません）。詳細なオプションは各コマンドの `--help` で確認できます（`dirsizer-inspect --help` が最も詳細です）。
 
 ### 管理者権限（昇格）について
 
-全ツール共通で NTFS のローメタデータへアクセスするため、実行ファイルには管理者権限を要求するマニフェスト（`requireAdministrator`）が埋め込まれています。非昇格環境で実行すると Windows の UAC ダイアログが表示されます（アプリ独自に `runas` 制御を行っているわけではありません）。すでに昇格済みのターミナルであれば、そのまま実行されます。なお、`dirsizer-bulk` と `dirsizer-inspect` はプロセス内で `SeBackupPrivilege` を有効化します。アカウントに同権限が付与されていない場合はエラーを出力します。
+NTFS 向けの 3 つのツールは NTFS のローメタデータへアクセスするため、実行ファイルには管理者権限を要求するマニフェスト（`requireAdministrator`）が埋め込まれています。`dirsizer.exe` は専用のマニフェスト（`asInvoker`）を持ち、管理者権限は不要で、通常のターミナルから実行でき、`> file` やパイプも使えます。非昇格環境で実行すると Windows の UAC ダイアログが表示されます（アプリ独自に `runas` 制御を行っているわけではありません）。すでに昇格済みのターミナルであれば、そのまま実行されます。なお、`dirsizer-bulk` と `dirsizer-inspect` はプロセス内で `SeBackupPrivilege` を有効化します。アカウントに同権限が付与されていない場合はエラーを出力します。
 
 **【Windows の挙動に関する注意点】**
 Windows の仕様上、非昇格コンソールから昇格が必要なプロセスを*同一コンソール内（In-place）*で起動することはできません。PowerShell では昇格要求エラーとなり、その他のランチャーでは別ウィンドウで管理者コンソールが開くため、標準出力をリダイレクト（`> result.json`）したりパイプで渡したりできなくなります。出力のリダイレクトやパイプ処理を行いたい場合は、**あらかじめ管理者権限で開いたターミナル**から実行してください。
@@ -42,6 +43,7 @@ Windows の仕様上、非昇格コンソールから昇格が必要なプロセ
 | `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `dirsizer-bulk.exe` |
 | `src\DirSizer.Fsctl\DirSizer.Fsctl.csproj` | `dirsizer-fsctl.exe` |
 | `src\DirSizer.Inspect\DirSizer.Inspect.csproj` | `dirsizer-inspect.exe` |
+| `src\DirSizer.Fs\DirSizer.Fs.csproj` | `dirsizer.exe` |
 
 依存関係のない単一の NativeAOT 実行ファイルを生成する場合（要 Visual Studio C++ ビルドツール）:
 
@@ -70,6 +72,9 @@ Bulk リーダーの内部構造（エクステント、USA フィックスア�
 .\scripts\Compare-Readers.ps1 -Volume T:       # dirsizer-fsctl と dirsizer-bulk の出力を比較（一致すれば終了コード 0）
 .\scripts\Compare-Benchmark.ps1 -Volume C: -Runs 5  # 交互実行によるフェーズ別（Min/Median/Max）パフォーマンス計測
 .\scripts\Test-BulkInstability.ps1 -Volume T:  # テスト用ボリュームの MFT を拡張させて挙動を検証（詳細はスクリプトヘッダー参照）
+.\scripts\Compare-Fs.ps1 -Path .\src -Oracle   # dirsizer.exe と独立した集計の比較（更新のないツリーで実行）
+.\scripts\Compare-Fs.ps1 -Path T:\ -Bulk       # dirsizer.exe と dirsizer-bulk の比較（想定される差異を一覧表示。docs\design_fs.md 参照）
+.\scripts\Compare-Fs.ps1 -Path C:\ -Sweep -Runs 3  # ワーカー数 1/2/4/8 での走査時間
 
 ```
 
@@ -87,6 +92,7 @@ dotnet artifacts\bin\DirSizer.Compare\release_win-x64\DirSizer.Compare.exe T:
 dotnet .\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll --self-test
 dotnet .\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll --self-test
 dotnet .\artifacts\bin\DirSizer.Inspect\release_win-x64\dirsizer-inspect.dll --self-test
+dotnet .\artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll --self-test       # %TEMP% にテスト用ツリーを作成。管理者権限は不要
 
 ```
 
@@ -98,6 +104,7 @@ Directory.Build.props        バージョン（1 か所）と、共通のビル�
 src\DirSizer.Fsctl\          dirsizer-fsctl
 src\DirSizer.Bulk\           dirsizer-bulk
 src\DirSizer.Inspect\        dirsizer-inspect
+src\DirSizer.Fs\             dirsizer.exe（ディレクトリ列挙、任意のファイルシステム、管理者権限不要。Core には依存しない）
 src\DirSizer.Compare\        開発者向けツール: 2 つのリーダーのレコード単位の比較
 src\DirSizer.Core\           リーダーに依存しないパイプライン（マージ、関係解決、集計）
 src\Shared\                  複数のツールにコンパイルされるファイル（オプションと出力、ConsolePause、app.manifest など）
@@ -117,7 +124,7 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1
 
 ```
 
-`dist\DirSizer-v<version>-win-x64.zip` が生成され、3 つの NativeAOT 実行ファイル、README、ライセンスが同梱されます。GitHub CLI（`gh`）を使用して GitHub Release へ自動公開を行う場合は、事前にサインイン（`gh auth login`）を完了させた上で以下を実行します:
+`dist\DirSizer-v<version>-win-x64.zip` が生成され、4 つの NativeAOT 実行ファイル（dirsizer.exe、dirsizer-bulk.exe、dirsizer-fsctl.exe、dirsizer-inspect.exe）、README、ライセンスが同梱されます。GitHub CLI（`gh`）を使用して GitHub Release へ自動公開を行う場合は、事前にサインイン（`gh auth login`）を完了させた上で以下を実行します:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 `
@@ -129,7 +136,7 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1 `
 
 ## 使い方
 
-管理者権限のターミナルから実行してください（詳細は「管理者権限（昇格）について」を参照）。`dirsizer-bulk` と `dirsizer-fsctl` は同じオプションを共有しています。
+NTFS 向けツールは管理者権限のターミナルから実行してください（詳細は「管理者権限（昇格）について」を参照）。`dirsizer-bulk` と `dirsizer-fsctl` は同じオプションを共有しています。`dirsizer.exe` は下の専用の節を参照してください。
 
 ```powershell
 .\dirsizer-bulk.exe C:\
@@ -145,6 +152,30 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1 `
 `$MFT` や `$Bitmap` などの著名な NTFS メタデータレコードは `[NTFS metadata]` として識別表示されます。パスが `[unresolved record ...]` と表示される場合、MFT 上にデータが存在するものの、親ディレクトリとの親子関係やパスが再構築できず、かつ既知のメタデータレコードにも該当しなかったものを意味します。
 
 スキャン中の進捗状況は `stderr`（標準エラー出力）に `current/estimated (percent%)` の形式で 1 行更新表示されます。そのため、`stdout`（標準出力）を汚すことなく、リダイレクトによる JSON 保存やパイプ処理を安全に行うことができます。
+
+## dirsizer.exe（任意のファイルシステム、管理者権限不要）
+
+`dirsizer.exe` は、`FindFirstFileExW` でディレクトリ一覧を読み取り、**任意の** Windows ファイルシステム（NTFS、ReFS、exFAT、FAT、ネットワーク共有）でフォルダーサイズを計算します。個々のファイルは開かず、複数のスレッドでディレクトリを並列に読み取り、管理者権限なしで動作します。読み取れないディレクトリはスキップされ、件数として報告されます。
+
+```powershell
+.\dirsizer.exe C:\Users
+.\dirsizer.exe \\server\share --top=50 --files
+.\dirsizer.exe D:\ --json > result.json
+.\dirsizer.exe C:\ --strict --workers 8 --benchmark
+```
+
+オプションは NTFS 向けツールと同じもの（`--top`、`--files`、`--dirs`、`--json`、`--benchmark`、`--self-test`）に加え、`--workers N`（既定はプロセッサ数、最大 8）と `--strict`（読み取れないディレクトリがあれば終了コード 3。結果は出力されます）があります。パスはドライブのルートに限らず、任意のディレクトリを指定できます。終了コード: 0 = 結果を出力、1 = エラー、3 = `--strict` 指定時に読み取れないディレクトリがあった。進捗は stderr に 1 行で更新表示され（`Scanning: N directories, M files`）、stderr がターミナルのときだけ表示されます。JSON 出力は ASCII のみ（パス中の非 ASCII 文字はエスケープされます）なので、コンソールのコードページに関係なく正確です。表形式の出力はコンソールのコードページに従うため、パスを正確に得たいときは `--json` を使ってください。JSON の最上位の構成は NTFS 向けツールと同じですが、`statistics` と `performance` のキーは異なります（[docs/design_fs.md](docs/design_fs.md)（英語）を参照）。
+
+結果は NTFS 向けツールと**同一にはなりません**（仕様です。詳細と実測した差異は [docs/design_fs.md](docs/design_fs.md)（英語）を参照）:
+
+| ケース | `dirsizer.exe` | NTFS 向けツール |
+| --- | --- | --- |
+| ハードリンクされたファイル | 名前を持つすべてのディレクトリで加算 | 1 回だけ加算 |
+| NTFS メタデータ（`$MFT`、`$Bitmap` など） | 列挙されず、加算されない | 加算される |
+| 読み取り権限のないディレクトリ | スキップし `directories_denied` に計上 | 加算される |
+| ジャンクション、シンボリックリンク、マウントポイントのディレクトリ | 辿らず `reparse_skipped` に計上 | 空のディレクトリとして一覧に出る |
+
+サイズは論理サイズ（ディレクトリ一覧が報告するサイズ）で、代替データストリームは含みません。NTFS では `dirsizer.exe` は `dirsizer-bulk` より遅い想定です。速度が必要で管理者権限で実行できる場合は NTFS 向けツールを使ってください。検証済みなのはローカルの NTFS のみです。他のファイルシステムやネットワーク共有は設計上は対応していますが、実行して確認するまでは未検証です。
 
 ## dirsizer-bulk（実験的実装）
 

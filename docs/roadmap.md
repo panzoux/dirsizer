@@ -76,8 +76,23 @@ The reported metric is logical bytes in the unnamed `$DATA` attribute. The scann
 - [x] Fixed a shared-code bug found by `dirsizer-inspect`: `BulkNative.MapLogicalToPhysical` dropped the position inside the cluster for offsets that are not cluster-aligned. Two tests reproduced it before the fix; the bulk reader (aligned blocks) was unaffected.
 - [x] Benchmark of the shipped NativeAOT tools (`dirsizer-fsctl` vs `dirsizer-bulk`, live C:, 5 pairs): median speedup 1.47x (per pair 1.42x to 2.14x; the 2.14x is one unusually slow FSCTL run). The five session medians so far are 1.37x, 1.42x, 1.47x, 1.52x, 1.52x.
 - [x] Release script publishes the three tools and packages them with the README and license (`dist\DirSizer-v0.3.0-win-x64.zip`, checked: three executables, each with the manifest, none containing the test-hook names, each passing its `--self-test`). The version now lives in `Directory.Build.props`.
-- [ ] Optional, only if needed: a combined `dirsizer.exe` that tries bulk and falls back to fsctl. Not built.
+- [x] Dropped: a combined `dirsizer.exe` that tries bulk and falls back to fsctl. The name now belongs to the any-filesystem tool of P5.
 - [ ] Benchmark and inspect features that were not done: `dirsizer-inspect --benchmark` (use `scripts\Compare-Benchmark.ps1`), and expanding `--record` for records other than by number (for example by path).
+
+## P5 - dirsizer.exe: any filesystem, no elevation
+
+Specified in [design_fs.md](design_fs.md). Independent of `DirSizer.Core`; none of the three NTFS tools was changed.
+
+- [x] `src\DirSizer.Fs` (`dirsizer.exe`): `FindFirstFileExW` with `FindExInfoBasic` and `LARGE_FETCH`, no per-file open, extended-length paths, reparse-point directories not entered, access denied skipped and counted, `--strict` exit 3, `asInvoker` manifest.
+- [x] Parallel walk: dedicated threads, one shared LIFO stack (intentionally unbounded; peak queue measured), `pending` counter for termination, directory ids allocated at discovery so `ParentId < Id`, aggregation as one reverse loop.
+- [x] `--self-test` (28 tests, JIT and NativeAOT builds): independent-oracle comparison for 1, 3 and 8 workers (nested and empty directories, zero-byte file, Unicode names, a path over 260 characters), junction, hard link, deny ACL, an 800-deep chain, a 10,000-wide fan-out (peak queued directories 10,000), the LARGE_FETCH fallback, the classification of find-first errors (missing, empty, denied, other), a failing directory in the middle of a walk, cancellation before and during a walk, a throwing worker, a failing caller (no worker left running), rejected settings, output and JSON.
+- [x] Mutation checks (eight deliberate breakages, each made its named test fail).
+- [x] `scripts\Compare-Fs.ps1 -Oracle` on `src\`: root and every direct child equal to the framework's enumeration.
+- [x] `scripts\Compare-Fs.ps1 -Bulk` on the `T:` fixture against `dirsizer-bulk`: every difference explained by hard links, NTFS metadata, a directory that cannot be read, or a reparse-point directory that bulk lists (see design_fs.md). At the root, the NTFS metadata files that bulk lists sum to 11,749,216 bytes; the difference left after subtracting the hard-link and denied-directory differences is 11,749,316 bytes, so 100 bytes are not accounted for (probably a file that changed between the two runs; not investigated).
+- [x] Worker sweep, `C:` (4 logical processors, warm cache, about 228,000 directories and 786,000 files, 3 runs per count, medians): 1 worker 44.0 s, 2 workers 25.7 s, 4 workers 20.3 s (2.2x), 8 workers 19.2 s (5 % faster than 4, below the 10 % rule for changing the default). In an earlier single run the workers spent nearly all their time inside the enumeration calls (`idle_ms_total` under 0.1 s at 4 workers), so the shared lock was not the limit. Default `min(ProcessorCount, 8)` kept. One machine, one volume.
+- [ ] Not measured: cold file cache, a second machine, a network share, exFAT/FAT, ReFS. Run before claiming anything for those.
+- [ ] Not tested by the agent: starting `dirsizer.exe` from a non-elevated terminal (expected: no UAC prompt, output and `> file` work). Needs the user.
+- [ ] P2 (later): benchmark `FindFirstFileExW` against `GetFileInformationByHandleEx(FileIdExtdDirectoryInfo)` and `NtQueryDirectoryFileEx` on the same fixtures; adopt only what measures faster. On the prototype machine `dirsizer.exe` reached about 53,000 entries per second on `C:`, far below what the NTFS tools reach per record, so the enumeration API is the place to look.
 
 ## Promotion criteria: bulk from experimental to default candidate
 

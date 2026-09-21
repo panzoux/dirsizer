@@ -221,11 +221,11 @@ Reading the results:
 Caveats: a warm file cache (cold-cache behaviour was not measured); a live volume that drifts slightly between runs; per-record `Stopwatch` instrumentation on both sides (three timers in bulk, two plus the query timer in FSCTL), so the fixup and parser rows include some timer overhead; one machine and one volume.
 ## Product layout: three tools
 
-The product is three executables that share `DirSizer.Core`. This replaced an earlier layout with one executable and a `--reader=fsctl|bulk` option; the decision and its reasons:
+The product is three executables that share `DirSizer.Core`. (A fourth, independent tool, `dirsizer.exe`, was added later for any filesystem; it shares no code with `DirSizer.Core` and is specified in [design_fs.md](design_fs.md).) This replaced an earlier layout with one executable and a `--reader=fsctl|bulk` option; the decision and its reasons:
 
 - `dirsizer-bulk` and `dirsizer-fsctl` are the same product function (a folder-size scan) with different backends, so they are separate tools with identical options and output. Choosing the tool chooses the backend; there is nothing to configure and no fallback between them.
 - `dirsizer-inspect` is a different kind of tool (looking at NTFS records, not measuring usage), so it has its own command line and does not affect the scan tools' interface.
-- A combined `dirsizer.exe` that tries bulk and falls back to fsctl was considered and not built. It can be added later without changing the three tools.
+- A combined `dirsizer.exe` that tries bulk and falls back to fsctl was considered and dropped. The name `dirsizer.exe` now belongs to the separate any-filesystem tool described in [design_fs.md](design_fs.md).
 
 | Tool | Project | Sources |
 | --- | --- | --- |
