@@ -324,9 +324,12 @@ static class BulkNative
         while (extentIndex < extents.Count && logicalCluster >= extents[extentIndex].VcnEnd) extentIndex++;
         if (extentIndex >= extents.Count || logicalCluster < extents[extentIndex].VcnStart) throw new IOException("MFT logical range is not covered by extents");
         var extent = extents[extentIndex];
-        var requestedClusters = (length + bytesPerCluster - 1) / bytesPerCluster;
+        // The offset need not be cluster-aligned (dirsizer-inspect reads single 1 KiB records, four to a 4 KiB cluster): keep the
+        // position inside the cluster, and count the clusters the read actually touches.
+        var offsetInCluster = logicalOffset % bytesPerCluster;
+        var requestedClusters = (offsetInCluster + length + bytesPerCluster - 1) / bytesPerCluster;
         if (logicalCluster + requestedClusters > extent.VcnEnd) throw new IOException("MFT block crosses an extent boundary");
-        return (extent.LcnStart + logicalCluster - extent.VcnStart) * bytesPerCluster;
+        return (extent.LcnStart + logicalCluster - extent.VcnStart) * bytesPerCluster + offsetInCluster;
     }
 
     public static int ReadAt(SafeFileHandle handle, byte[] buffer, int length, long offset)

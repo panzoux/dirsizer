@@ -19,6 +19,8 @@ static class BulkSelfTests
         BlocksSplitAtExtentBoundaries();
         BlocksCoverEveryRecordOnce();
         UncoveredMftRangeFails();
+        UnalignedOffsetKeepsItsPositionInsideTheCluster();
+        UnalignedReadThatSpillsPastTheExtentIsRejected();
         ExtentMapContinuesAfterMoreData();
         ExtentMapInOneCallStillWorks();
         MoreDataWithoutProgressFails();
@@ -169,6 +171,28 @@ static class BulkSelfTests
         // The same clusters described as three extents (as after a merge or split) are not a relocation.
         var end = Layout(100 * 4096, 0x1234, new(0, 30, 1000), new(30, 60, 1030), new(60, 100, 5000));
         Assert(MftLayout.Compare(Layout(), end) == LayoutChange.None, "the same physical mapping split differently must be stable");
+    }
+
+    // Reading a single 1 KiB record puts the offset in the middle of a 4 KiB cluster. The physical offset must keep that
+    // position (an aligned-only mapping silently returned the start of the cluster, i.e. a different record).
+    static void UnalignedOffsetKeepsItsPositionInsideTheCluster()
+    {
+        var extents = new List<BulkNative.MftExtent> { new(0, 3072, 1000) };
+        var index = 0;
+        var physical = BulkNative.MapLogicalToPhysical(5 * 1024, 1024, 4096, extents, ref index);
+        Assert(physical == (1000L + 1) * 4096 + 1024, $"record 5 (offset 5,120) must map to cluster 1001 plus 1,024 bytes, got {physical}");
+        index = 0;
+        Assert(BulkNative.MapLogicalToPhysical(8 * 4096, 4096, 4096, extents, ref index) == (1000L + 8) * 4096, "an aligned offset must still map to the start of its cluster");
+    }
+
+    static void UnalignedReadThatSpillsPastTheExtentIsRejected()
+    {
+        var extents = new List<BulkNative.MftExtent> { new(0, 2, 1000) };
+        var index = 0;
+        var threw = false;
+        try { BulkNative.MapLogicalToPhysical(2 * 4096 - 512, 1024, 4096, extents, ref index); }
+        catch (IOException) { threw = true; }
+        Assert(threw, "a read that starts inside the last cluster of an extent and runs past its end must be rejected");
     }
 
     static void ZeroedSlotIsUnused() =>

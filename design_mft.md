@@ -2,7 +2,7 @@
 
 ## Goal
 
-`DirSizer.Bulk.csproj` builds a separate experimental executable, `DirSizer.Bulk.exe`. It tests whether bulk reads of raw `$MFT` bytes can outperform the existing FSCTL reference reader.
+`DirSizer.Bulk.csproj` builds `dirsizer-bulk.exe`, an experimental tool that reads the raw `$MFT` in bulk. It tests whether bulk reads can outperform the FSCTL reference reader (`dirsizer-fsctl.exe`); see "Product layout: three tools".
 
 The FSCTL executable remains the correctness baseline. P3 does not replace its parser, aggregation, output semantics, or default behavior.
 
@@ -25,7 +25,7 @@ The P3 probe currently implements:
 - the shared `DirSizer.Core` pipeline: `RecordParser` -> `RecordMerger` -> `RelationshipResolver` -> `SizeAggregator` -> `ResultSelector` / `RecordPaths`
 - the same text listing as the FSCTL reader, plus `--benchmark` phase timings
 
-`DirSizer.Bulk.exe` runs the complete folder-size pipeline. Results go to stdout in the reference reader's format; reader diagnostics, `--benchmark`, and `--diagnostics` go to stderr. `--root-children` additionally lists the root's direct children, which the FSCTL reader reports only in `--json`.
+`dirsizer-bulk` runs the complete folder-size pipeline and prints in the same format as `dirsizer-fsctl`: results to stdout, `--benchmark` and `--diagnostics` to stderr.
 
 ## Record normalization
 
@@ -182,9 +182,9 @@ Whether reading blocks in reverse costs anything compared with a forward scan wa
 
 ## Bulk output vs the FSCTL reference
 
-`scripts\Compare-BulkToSnapshot.ps1` runs the bulk executable on the same quiescent volume and checks it against the reference snapshot: root size; every directory (path, size, order); every file with data (path, size, order); the root's children; the record, file, directory, extension, relationship (exact, fallback, unresolved) counters; the unresolved records; and the relationship mismatch samples. Bulk stdout is captured as UTF-8, because a legacy console code page turns surrogate-pair names into `?`.
+`scripts\Compare-Readers.ps1` runs `dirsizer-fsctl` and `dirsizer-bulk` on the same quiescent volume and compares them (it replaced an earlier script that compared a bulk test harness with a frozen snapshot; see "Product layout: three tools" for the current checks). The comparison covers: root size; every directory (path, size, order); every file with data (path, size, order); the root's children; the record, file, directory, extension, relationship (exact, fallback, unresolved) counters; the unresolved records; and the relationship mismatch samples. Bulk stdout is captured as UTF-8, because a legacy console code page turns surrogate-pair names into `?`.
 
-Result on T: (fixture): `RESULT: EQUAL (all checks)`: root 29,384,721 bytes, 33 directories, 234 files, 16 root children, 281 logical records, 276 exact relationships, 4 unresolved records (12-15, the known zero-size NTFS metadata records).
+Result on T: (fixture, at the time of the first comparison; the volume has since grown, see the instability test): `RESULT: EQUAL (all checks)`: root 29,384,721 bytes, 33 directories, 234 files, 16 root children, 281 logical records, 276 exact relationships, 4 unresolved records (12-15, the known zero-size NTFS metadata records).
 
 ## Benchmark: FSCTL vs bulk with identical phases
 
@@ -219,15 +219,58 @@ Reading the results:
 - Bulk peak working set and allocation are about 1 to 2% higher, not lower: it holds the same record dictionary plus an 8 MiB buffer.
 
 Caveats: a warm file cache (cold-cache behaviour was not measured); a live volume that drifts slightly between runs; per-record `Stopwatch` instrumentation on both sides (three timers in bulk, two plus the query timer in FSCTL), so the fixup and parser rows include some timer overhead; one machine and one volume.
-## Product integration (`--reader=bulk`)
+## Product layout: three tools
 
-`dirsizer.exe --reader=fsctl|bulk` (default fsctl). The bulk sources are compiled into the main executable (`BulkReader.cs`, `BulkStability.cs`, `BulkScanner.cs`, `BulkReport.cs`); the bulk reader's low-level class was renamed `BulkNative` so the reference `Native` class stays untouched. `BulkScanner.Scan` runs one scan with the layout check and one rescan; `BulkIntegration.Run` maps the outcome onto the reference `ScanResult` (acquisition time takes the FSCTL "query" slot, raw read operations the query count, `records_scanned` is the MFT slots examined, `records_skipped` is the unparseable slots), and the reference `Output` prints it, so there is one implementation of the listing and JSON. `DirSizer.Bulk.exe` remains as a test harness (`--diagnose`, `--root-children`, and the instability test options) sharing the same scanner; it is not shipped. The live-instability test can also drive the real CLI through two environment variables (`DIRSIZER_TEST_BULK_DELAY_AFTER_SCAN_MS`, `DIRSIZER_TEST_BULK_NO_RETRY`); they are read only under `#if DIRSIZER_TEST_HOOKS`, which is defined only by the separate `TestHooks` build configuration that `scripts\Test-BulkInstability.ps1 -Product` builds for itself. Debug and Release builds and publishes do not contain them.
+The product is three executables that share `DirSizer.Core`. This replaced an earlier layout with one executable and a `--reader=fsctl|bulk` option; the decision and its reasons:
 
-Failure behaviour: no automatic fallback; errors exit 1 with the same `error:` line format as the FSCTL reader; an unstable scan prints its results, warns on stderr, and exits 3.
+- `dirsizer-bulk` and `dirsizer-fsctl` are the same product function (a folder-size scan) with different backends, so they are separate tools with identical options and output. Choosing the tool chooses the backend; there is nothing to configure and no fallback between them.
+- `dirsizer-inspect` is a different kind of tool (looking at NTFS records, not measuring usage), so it has its own command line and does not affect the scan tools' interface.
+- A combined `dirsizer.exe` that tries bulk and falls back to fsctl was considered and not built. It can be added later without changing the three tools.
 
-Verified through the product CLI on the quiescent test volume, in both the JIT and the NativeAOT build: `scripts\Compare-Readers.ps1` compares `--reader=fsctl --json` with `--reader=bulk --json` on 23 items (root, all directories and files with order, root children, all counters, unresolved records, relationship samples, reader field, and that the bulk scan was stable): EQUAL. It was proven able to fail: with the temporary ascending record order it reports four differing checks. The default (FSCTL) output was compared with the frozen baseline after each change: identical, and after adding the `reader` JSON property the only difference is that one property.
+| Tool | Project | Sources |
+| --- | --- | --- |
+| `dirsizer-fsctl` | `DirSizer.Fsctl.csproj` | `FsctlProgram.cs`, `FsctlScanner.cs` (the reference scanner and its FSCTL calls), `Cli.cs`, `DriveRoot.cs`, `SelfTests.cs` |
+| `dirsizer-bulk` | `DirSizer.Bulk.csproj` | `BulkCliProgram.cs`, `BulkIntegration.cs`, `BulkReader.cs`, `BulkStability.cs`, `BulkScanner.cs`, `BulkReport.cs`, `BulkSelfTests.cs`, plus `Cli.cs`, `DriveRoot.cs`, `SelfTests.cs` |
+| `dirsizer-inspect` | `DirSizer.Inspect.csproj` | `InspectProgram.cs`, `RecordInspector.cs`, `RunList.cs`, `InspectSelfTests.cs`, `RecordDiff.cs`, `DriveRoot.cs`, and the bulk reader files |
 
-Failure paths executed on real volumes, both readers:
+`Cli.cs` holds what the two scan tools share: the options, the result types, and the text and JSON output. Reader-specific extras reach it through a small interface (`IScanDetails`), so the shared output code does not know which reader produced a result. `DirSizer.Compare.csproj` (record-by-record comparison of the two readers on a whole volume) and `scripts\` are developer tools and are not shipped; `RecordDiff.cs` is shared between the Compare tool and `dirsizer-inspect --compare`. The split was verified the same way as the earlier extraction: `dirsizer-fsctl`'s complete output was byte-identical to the frozen baseline taken before the split, and `Compare-Readers.ps1` was EQUAL for the two tools in the JIT and NativeAOT builds.
+
+### Elevation
+
+Every tool reads raw volume data, so all three embed one manifest, `app.manifest`, with `requestedExecutionLevel level="requireAdministrator"`: Windows shows the UAC prompt when a tool is started and the process runs elevated, and there is no `runas` code, no argument or exit-code forwarding to get wrong. Checked: the manifest is present in the NativeAOT executables and in the `dotnet build` apphosts (by searching the binary; the Compare tool, which has no such manifest, was used as a negative control), and an elevated shell runs them without a prompt. `SeBackupPrivilege` is a separate matter: the process enables it itself (`BulkNative.EnableBackupPrivilege`) and throws a clear error if it is not held; users are not asked to configure it.
+
+Cost and caveat: a UAC prompt on every start from a non-elevated context, and, more importantly for a command-line tool, a program that requires elevation cannot be started in place from a non-elevated console, so `> result.json` and pipes do not work from one. This was not tested here (a de-elevated launch could not be arranged on the development machine); it is stated in the README so it is not a surprise. Setting `level="asInvoker"` in `app.manifest` reverts it for all three tools.
+
+The test-only environment variables of the live-instability test exist only in the `TestHooks` build configuration of `DirSizer.Bulk.csproj` (`#if DIRSIZER_TEST_HOOKS`); Debug and Release builds, every publish, and the release zip do not contain them (checked, with a positive control).
+
+## dirsizer-inspect
+
+Purpose: answer "what is this NTFS record?" without a debugger. Commands: `--volume`, `--mft-extents`, `--slots [--diagnose]`, `--record N [--dump] [--raw]`, `--compare N`; `--help` explains the terms and gives examples.
+
+`RecordInspector` (pure text formatting, no I/O) describes one raw record: the classification, the header, the update sequence array checked against the on-disk sector tails, every attribute, and the shared parser's view of the record. Every read is bounds-checked; damaged records are reported, not fatal. A non-resident `$ATTRIBUTE_LIST` is expanded by decoding its run list (`RunList`, also pure) and reading the clusters. `--compare N` reads slot N through the bulk reader's raw path and through `FSCTL_GET_NTFS_FILE_RECORD` and uses the same `RecordDiff` code as the Compare tool (saved update-sequence-array entries are informational, everything else must be equal).
+
+Tests without a volume: the formatter on synthetic records (every classification, a broken update sequence array, extension records, resident and non-resident attribute lists, named streams, a malformed attribute, 1,000 random records that must never throw), the run-list decoder including signed offsets, sparse runs, and damaged lists. Each was shown to fail under a deliberate mutation of the formatter.
+
+Checked on the test volume against independent sources:
+
+- `--volume` and `--mft-extents` agree with the Compare tool's extent map (one extent of 1,024 clusters); `--slots` gives the same in-use, deleted, and unused counts as `dirsizer-bulk --json`.
+- Record 0 (`$MFT`): its unnamed `$DATA` size (4,194,304) equals the MFT valid length, its run covers VCN 0-1,023 like the extent map, and its physical offset equals `MftStartLcn * cluster size`.
+- A file with 150 hard links (record 275, hard link count 151): its non-resident attribute list was read from 2 runs (4,896 bytes, 153 entries) and names 74 extension records (276-349), exactly the 74 extension records on the volume; all 74 have a base reference pointing back to 275; their `$FILE_NAME` attributes number 149, plus 2 in the base record, matching the 151 links; the 3,000-byte data is in an extension record, which is why the base record alone reports a logical size of 0 and why the merge step exists.
+- A file with alternate data streams shows the unnamed 300-byte stream and the named ones; a fragmented file shows 6,144,000 bytes (1,500 x 4,096).
+- `--compare` on 194 slots (0-40, 270-360, and every 61st slot above): 124 in-use records byte-identical between the raw read and FSCTL, 57 deleted and 13 unused slots consistently skipped by FSCTL, no differences.
+- All error paths give one `error:` line and exit code 1 (bad or missing record number, record beyond the MFT, two commands, options that do not apply, missing or second volume, non-NTFS volume, bad drive).
+
+A bug in shared code was found by this tool: `BulkNative.MapLogicalToPhysical` returned a cluster-aligned physical offset and dropped the position inside the cluster. The bulk reader never noticed because its blocks start on cluster boundaries; `--record 5` read record 4 instead (the output showed `$AttrDef` where the root directory belongs, and a physical offset one cluster in instead of 1,024 bytes). It now keeps the position inside the cluster and counts the clusters a read actually touches; two tests reproduced the bug before the fix, and the bulk reader's results were unchanged.
+
+## Product integration (bulk)
+
+`dirsizer-bulk` runs the shared raw-bulk scan through `BulkIntegration.Run`, which maps the outcome onto the shared `ScanResult` (acquisition time takes the FSCTL "query" slot, raw read operations the query count, `records_scanned` is the MFT slots examined, `records_skipped` is the unparseable slots), and the shared `Output` prints it, so there is one implementation of the listing and JSON. `BulkScanner.Scan` runs one scan with the layout check and one rescan.
+
+Failure behaviour: no automatic fallback; errors exit 1 with the same `error:` line format as `dirsizer-fsctl`; an unstable scan prints its results, warns on stderr, and exits 3.
+
+Verified through the tools on the quiescent test volume, in both the JIT and the NativeAOT build: `scripts\Compare-Readers.ps1` compares `dirsizer-fsctl --json` with `dirsizer-bulk --json` on 27 items (root, all directories and files with order, root children, all counters, unresolved records, relationship samples, reader field, that the bulk scan was stable, and each tool's text listing against its own JSON): EQUAL. It was proven able to fail: with the temporary ascending record order it reports four differing checks, and with the old `--files` bug reverted it reports two.
+
+Failure paths executed on real volumes:
 
 | Case | Result |
 | --- | --- |
@@ -236,13 +279,14 @@ Failure paths executed on real volumes, both readers:
 | two volumes | `error: Only one volume is supported.`, exit 1 |
 | exFAT volume, RAW/empty drive | `error: ... filesystem is exFAT|unknown; only NTFS volumes are supported.`, exit 1 (the bulk reader used to say only `Win32 error 1`) |
 | `T:\` with trailing backslash | works, exit 0 |
-| bad option or bad `--reader` value | `error: ...`, exit 1 (both readers used to crash with a stack trace) |
-| MFT grows during the scan | exit 3 with `--no-retry`, stable second attempt otherwise |
+| bad option | `error: ...`, exit 1 (both tools used to crash with a stack trace) |
+| MFT grows during the scan | exit 3 with no retry, stable second attempt otherwise |
 
-Not executed: running without elevation, a failing raw read, and a corrupt extent map on a real volume.
+Not executed: running without elevation (now moot for the manifest, see "Elevation"), a failing raw read, and a corrupt extent map on a real volume.
 
-Product benchmark, NativeAOT `dirsizer.exe`, `--reader=fsctl` against `--reader=bulk`, live C:, 5 alternating pairs: FSCTL total 7,666 / 7,857 / 8,166 ms, bulk 5,608 / 5,703 / 5,738 ms, per-pair speedup 1.36x / 1.37x / 1.44x; acquisition 4,815 vs 2,386 ms. Both readers' shared CPU phases were slower in this session than in the earlier AOT run (parser about 1.8 s against 1.25 s), which is why the ratio is lower. Across the four sessions so far the median speedup was 1.42x, 1.52x, 1.52x, and 1.37x; the honest summary is "about 1.4x", not a single figure.
+Product benchmark, NativeAOT, `--reader=fsctl` against `--reader=bulk` (measured on the single executable that existed before the split into two tools; the scan code is the same), live C:, 5 alternating pairs: FSCTL total 7,666 / 7,857 / 8,166 ms, bulk 5,608 / 5,703 / 5,738 ms, per-pair speedup 1.36x / 1.37x / 1.44x; acquisition 4,815 vs 2,386 ms. Both readers' shared CPU phases were slower in this session than in the earlier AOT run (parser about 1.8 s against 1.25 s), which is why the ratio is lower. Across the sessions so far the median speedup was 1.42x, 1.52x, 1.52x, and 1.37x (and see the next paragraph); the honest summary is "about 1.4x", not a single figure.
 
+The shipped tools, NativeAOT `dirsizer-fsctl.exe` against `dirsizer-bulk.exe` (fifth session, live C:, 5 alternating pairs, `phase_sum == total` in all 10 runs): FSCTL total 7,944 / 8,037 / 12,410 ms, bulk 5,474 / 5,542 / 5,795 ms, per-pair speedup 1.42x / 1.47x / 2.14x. The 2.14x maximum comes from one FSCTL run that took 12.4 s (its acquisition took 8.8 s against the usual 5.0 s); it is noise in the slower reader, not a gain, so the median (1.47x) is the figure to use. Acquisition 5,056 vs 2,387 ms; raw read 419.5 MB/s; bulk peak working set 437 MB against 422 MB. The five session medians are 1.37x, 1.42x, 1.47x, 1.52x, and 1.52x.
 ## Record-level FSCTL vs bulk comparison
 
 `DirSizer.Compare.csproj` builds a developer tool (not part of the product) that compares the two readers record by record on a quiescent NTFS volume. It links `BulkReader.cs`, so the bulk side is the real reader, and it has its own minimal `FSCTL_GET_NTFS_FILE_RECORD` wrapper that mirrors the reference reader's error handling; the bulk executable itself contains no FSCTL record access.

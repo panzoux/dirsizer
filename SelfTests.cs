@@ -14,7 +14,6 @@ static class SelfTests
         AggregationRollsUpToRoot();
         TopSelectionReturnsLargestFirst();
         Console.WriteLine("P0 self-tests passed.");
-        BulkSelfTests.Run();
     }
 
     static void MalformedRecordIsRejected()

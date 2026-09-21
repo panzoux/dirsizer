@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!-- dirsizer-fsctl.exe: folder-size scan through FSCTL_GET_NTFS_FILE_RECORD. The reference implementation. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <Version>0.3.0</Version>
+    <AssemblyName>dirsizer-fsctl</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
@@ -12,17 +13,15 @@
     <DebugType>none</DebugType>
     <StripSymbols>true</StripSymbols>
     <OptimizationPreference>Speed</OptimizationPreference>
-  </PropertyGroup>
-  <!-- The only build that contains the test-only environment-variable hooks (see BulkIntegration.cs). Never used for a release. -->
-  <PropertyGroup Condition="'$(Configuration)' == 'TestHooks'">
-    <DefineConstants>$(DefineConstants);DIRSIZER_TEST_HOOKS</DefineConstants>
-    <Optimize>true</Optimize>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="BulkProgram.cs" />
-    <Compile Remove="CompareProgram.cs" />
-    <Compile Remove="CoreRecords.cs" />
-    <Compile Remove="CorePipeline.cs" />
+    <Compile Include="FsctlProgram.cs" />
+    <Compile Include="FsctlScanner.cs" />
+    <Compile Include="Cli.cs" />
+    <Compile Include="DriveRoot.cs" />
+    <Compile Include="SelfTests.cs" />
     <ProjectReference Include="DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>

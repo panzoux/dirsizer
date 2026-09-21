@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- dirsizer-bulk.exe: the same folder-size scan reading the raw $MFT in large blocks. Experimental. -->
+  <!-- dirsizer-inspect.exe: read-only inspection of the NTFS master file table. For investigating and developing. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <AssemblyName>dirsizer-bulk</AssemblyName>
+    <AssemblyName>dirsizer-inspect</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
@@ -16,22 +16,17 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
-  <!-- The only build that contains the test-only environment-variable hooks (see BulkIntegration.cs). Never used for a release. -->
-  <PropertyGroup Condition="'$(Configuration)' == 'TestHooks'">
-    <DefineConstants>$(DefineConstants);DIRSIZER_TEST_HOOKS</DefineConstants>
-    <Optimize>true</Optimize>
-  </PropertyGroup>
   <ItemGroup>
-    <Compile Include="BulkCliProgram.cs" />
-    <Compile Include="BulkIntegration.cs" />
+    <Compile Include="InspectProgram.cs" />
+    <Compile Include="RecordInspector.cs" />
+    <Compile Include="RunList.cs" />
+    <Compile Include="InspectSelfTests.cs" />
+    <Compile Include="RecordDiff.cs" />
+    <Compile Include="DriveRoot.cs" />
     <Compile Include="BulkReader.cs" />
     <Compile Include="BulkStability.cs" />
     <Compile Include="BulkScanner.cs" />
     <Compile Include="BulkReport.cs" />
-    <Compile Include="BulkSelfTests.cs" />
-    <Compile Include="Cli.cs" />
-    <Compile Include="DriveRoot.cs" />
-    <Compile Include="SelfTests.cs" />
     <ProjectReference Include="DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>

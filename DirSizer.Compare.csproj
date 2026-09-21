@@ -17,6 +17,7 @@
   <ItemGroup>
     <Compile Include="CompareProgram.cs" />
     <Compile Include="BulkReader.cs" />
+    <Compile Include="RecordDiff.cs" />
     <ProjectReference Include="DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>

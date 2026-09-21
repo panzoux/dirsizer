@@ -3,7 +3,7 @@
   Alternating FSCTL / bulk benchmark with min, median, and max per phase.
 
 .DESCRIPTION
-  Runs the FSCTL reference reader and the raw bulk reader alternately (after one discarded warm-up pair) and prints the
+  Runs dirsizer-fsctl and dirsizer-bulk alternately (after one discarded warm-up pair) and prints the
   phase timings each reports in its `benchmark:` line. Both are run through the same `dotnet` host. The FSCTL "query"
   phase corresponds to the bulk extents + raw_read + fixup phases ("acquire" row).
 
@@ -12,10 +12,9 @@
 param(
     [string]$Volume = 'C:',
     [int]$Runs = 5,
-    [string]$FsctlDll = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\DirSizer.dll'),
-    [string]$BulkDll = (Join-Path $PSScriptRoot '..\bin\Bulk\Release\net8.0-windows\win-x64\DirSizer.Bulk.dll'),
-    # Extra arguments for each side. To compare the two readers of the product executable itself:
-    #   -FsctlDll dirsizer.exe -BulkDll dirsizer.exe -BulkArguments '--reader=bulk'
+    [string]$FsctlDll = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\dirsizer-fsctl.dll'),
+    [string]$BulkDll = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll'),
+    # Extra command-line arguments for each side (none are needed for the two tools).
     [string[]]$FsctlArguments = @(),
     [string[]]$BulkArguments = @()
 )

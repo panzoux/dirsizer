@@ -1,17 +1,18 @@
 <#
 .SYNOPSIS
-  Compares `dirsizer --reader=fsctl` with `dirsizer --reader=bulk` (both --json) on a QUIESCENT volume.
+  Compares dirsizer-fsctl with dirsizer-bulk (both --json, and both text mode) on a QUIESCENT volume.
 
 .DESCRIPTION
-  Takes a snapshot with each reader through the product CLI (Get-ReferenceSnapshot.ps1 -Reader) and compares everything
-  that must be the same: root size, every directory and file (path, size, order), the root's children, record and
-  relationship counters, unresolved records, and relationship samples. It also checks that each snapshot names its
-  reader and that the bulk scan reported itself stable. Reader-specific fields (records_scanned, query_count, timings,
-  the `bulk` object) are not compared. Exit code 0 only if everything is equal.
+  Takes a snapshot with each tool (Get-ReferenceSnapshot.ps1) and compares everything that must be the same: root size,
+  every directory and file (path, size, order), the root's children, record and relationship counters, unresolved
+  records, and relationship samples. It also checks that each snapshot names its reader, that the bulk scan reported
+  itself stable, and that each tool's text listing matches its own JSON. Reader-specific fields (records_scanned,
+  query_count, timings, the `bulk` object) are not compared. Exit code 0 only if everything is equal.
 #>
 param(
     [string]$Volume = 'T:',
-    [string]$Exe = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\DirSizer.dll'),
+    [string]$FsctlPath = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\dirsizer-fsctl.dll'),
+    [string]$BulkPath = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll'),
     [string]$OutDirectory = ([IO.Path]::GetTempPath())
 )
 $ErrorActionPreference = 'Stop'
@@ -19,8 +20,8 @@ $ErrorActionPreference = 'Stop'
 $snapshotScript = Join-Path $PSScriptRoot 'Get-ReferenceSnapshot.ps1'
 $fsctlFile = Join-Path $OutDirectory 'readers-fsctl.txt'
 $bulkFile = Join-Path $OutDirectory 'readers-bulk.txt'
-$null = & $snapshotScript -Volume $Volume -Dll $Exe -Reader fsctl -Out $fsctlFile
-$null = & $snapshotScript -Volume $Volume -Dll $Exe -Reader bulk -Out $bulkFile
+$null = & $snapshotScript -Volume $Volume -Tool fsctl -Path $FsctlPath -Out $fsctlFile
+$null = & $snapshotScript -Volume $Volume -Tool bulk -Path $BulkPath -Out $bulkFile
 
 function Load([string]$file) {
     $parts = (Get-Content -Raw $file) -split '--- diagnostics ---'
@@ -45,7 +46,7 @@ function CheckList([string]$name, $expected, $actual) {
     else { "  DIFFERENT  $name  fsctl=$($e.Count) bulk=$($a.Count) first_difference_at=$first"; $script:failures++ }
 }
 
-"fsctl vs bulk through the dirsizer CLI on $Volume"
+"dirsizer-fsctl vs dirsizer-bulk on $Volume"
 Check 'reader field (fsctl snapshot)' 'fsctl' $f.Json.reader
 Check 'reader field (bulk snapshot)' 'bulk' $b.Json.reader
 Check 'bulk scan reported stable in 1 attempt' @('stable', 1, 'None') @($b.Json.bulk.scan_stability, $b.Json.bulk.attempts, $b.Json.bulk.layout_changes)
@@ -61,13 +62,13 @@ foreach ($name in 'returned_records', 'parse_successful_records', 'extension_rec
 Check 'relationship samples' @($f.Json.statistics.performance.relationship_samples) @($b.Json.statistics.performance.relationship_samples)
 Check 'unresolved records' $f.Diagnostics $b.Diagnostics
 
-# Text mode has its own code path: each reader's text listing must show the same sizes as its own JSON, and the two
-# listings must be identical. (Text --files once printed 0 for every size while the JSON was right.)
-function Get-TextListing([string]$reader) {
+# Text mode has its own code path: each tool's text listing must show the same sizes as its own JSON.
+# (Text --files once printed 0 for every size while the JSON was right.)
+function Get-TextListing([string]$path) {
     $previous = [Console]::OutputEncoding
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     try {
-        $lines = if ($Exe -like '*.exe') { & $Exe $Volume --dirs --files --top=1000000 "--reader=$reader" 2> $null } else { & dotnet $Exe $Volume --dirs --files --top=1000000 "--reader=$reader" 2> $null }
+        $lines = if ($path -like '*.exe') { & $path $Volume --dirs --files --top=1000000 2> $null } else { & dotnet $path $Volume --dirs --files --top=1000000 2> $null }
     } finally { [Console]::OutputEncoding = $previous }
     $sections = @{}; $current = $null
     foreach ($line in $lines) {
@@ -78,8 +79,8 @@ function Get-TextListing([string]$reader) {
     $sections
 }
 function AsText($items) { @($items | ForEach-Object { "{0,12:N0}`t{1}" -f $_.size, $_.path }) }
-$textFsctl = Get-TextListing 'fsctl'
-$textBulk = Get-TextListing 'bulk'
+$textFsctl = Get-TextListing $FsctlPath
+$textBulk = Get-TextListing $BulkPath
 Check 'text directories match the fsctl JSON' (AsText $f.Json.directories) @($textFsctl['Directories'])
 Check 'text files match the fsctl JSON' (AsText $f.Json.files) @($textFsctl['Files'])
 Check 'text directories match the bulk JSON' (AsText $b.Json.directories) @($textBulk['Directories'])

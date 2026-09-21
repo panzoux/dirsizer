@@ -1,14 +1,13 @@
-// `--reader=bulk`: runs the shared raw-bulk scan and presents it through the reference reader's own result type, so the
-// listing and JSON come from the same Output code for both readers.
+// dirsizer-bulk: runs the shared raw-bulk scan and presents it through the shared result type, so the listing and JSON
+// come from the same Output code as dirsizer-fsctl.
 static class BulkIntegration
 {
     public static ScanResult Run(Options options)
     {
-        var volume = options.Volume.Trim().TrimEnd('\\');
-        Scanner.NormalizeVolume(volume); // same drive-root validation as the FSCTL reader
+        var volume = DriveRoot.Validate(options.Volume);
 #if DIRSIZER_TEST_HOOKS
         // TEST BUILD ONLY. This block exists only in the "TestHooks" build configuration, which scripts\Test-BulkInstability.ps1
-        // -Product builds for itself. It is compiled out of Debug and Release builds and of every publish, so the shipped
+        // builds for itself. It is compiled out of Debug and Release builds and of every publish, so the shipped
         // executable neither reads these variables nor contains their names. They hold the window between the scan and the
         // MFT layout re-check open and disable the rescan, so the live-instability path can be tested on a real volume.
         var testDelay = int.TryParse(Environment.GetEnvironmentVariable("DIRSIZER_TEST_BULK_DELAY_AFTER_SCAN_MS"), out var delay) ? Math.Max(0, delay) : 0;
@@ -43,6 +42,21 @@ static class BulkIntegration
         var directories = ResultSelector.SelectTop(pipeline.Candidates.Directories, options.Top, record => record.Size);
         var files = ResultSelector.SelectTop(pipeline.Candidates.Files, options.Top, record => record.LogicalSize);
         return new ScanResult(volume, pipeline.Records, directories, files, relationships.Root, pipeline.Candidates.RootChildren.ToArray(),
-            relationships.UnresolvedRecords, checked((int)scan.Slots), skipped, scanMetrics, outcome.IsStable ? 0 : 3, outcome);
+            relationships.UnresolvedRecords, checked((int)scan.Slots), skipped, scanMetrics, outcome.IsStable ? 0 : 3, "bulk", new BulkDetails(outcome));
+    }
+}
+
+// The bulk-only parts of the output: its own benchmark line and the "bulk" JSON object.
+sealed class BulkDetails(BulkScanOutcome outcome) : IScanDetails
+{
+    public void PrintBenchmark() => BulkReport.PrintBenchmark(outcome);
+
+    public JsonBulk? ToJson()
+    {
+        var scan = outcome.Pipeline.Scan;
+        var metrics = outcome.Pipeline.Metrics;
+        return new JsonBulk(outcome.IsStable ? "stable" : "unstable", outcome.Attempts, outcome.Change.ToString(), outcome.DiscardedTime.TotalMilliseconds,
+            metrics.ExtentsTime.TotalMilliseconds, metrics.RawReadTime.TotalMilliseconds, metrics.FixupTime.TotalMilliseconds, metrics.StabilityTime.TotalMilliseconds,
+            scan.ReadOperations, scan.MegabytesPerSecond, scan.Slots, scan.InUseSlots, scan.DeletedSlots, scan.UnusedSlots, scan.Malformed, scan.FixupFailures, scan.SignatureMalformed);
     }
 }

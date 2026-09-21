@@ -4,5 +4,7 @@
   <PropertyGroup>
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
     <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**;dist\**</DefaultItemExcludes>
+    <!-- One version for every tool; scripts\release.ps1 reads it from here. -->
+    <Version>0.3.0</Version>
   </PropertyGroup>
 </Project>

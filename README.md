@@ -8,88 +8,87 @@ DirSizer is released under the MIT License. See [LICENSE](LICENSE).
 
 ## Status
 
-This is the first practical baseline. It targets NTFS volumes, requires an elevated terminal, and reads metadata with:
+This is the first practical baseline. It targets NTFS volumes and reads the master file table (MFT) directly. It does not use `FindFirstFile`, `Directory.EnumerateFiles`, the USN journal, or path traversal.
 
-- `FSCTL_GET_NTFS_VOLUME_DATA` for MFT length and record size.
-- `FSCTL_GET_NTFS_FILE_RECORDS` for active MFT records.
+## The tools
 
-The scanner parses only the record header, `$FILE_NAME`, and unnamed `$DATA`. It does not use `FindFirstFile`, `Directory.EnumerateFiles`, the USN journal, or path traversal.
+DirSizer is three separate executables:
+
+| Tool | What it is for | Notes |
+| --- | --- | --- |
+| `dirsizer-bulk.exe` | Fast folder-size scan | **Experimental.** Reads the raw `$MFT` in large blocks. About 1.4x faster than `dirsizer-fsctl` in measurements. |
+| `dirsizer-fsctl.exe` | The same folder-size scan through `FSCTL_GET_NTFS_FILE_RECORD` | The reference implementation. Use it to cross-check `dirsizer-bulk`, to benchmark, or when you want the conservative method. |
+| `dirsizer-inspect.exe` | Looking inside the NTFS `$MFT` | For investigating and developing: one record's attributes, the `$MFT` extents, slot counts, raw-vs-FSCTL comparison. Not a usage scan. |
+
+`dirsizer-bulk` and `dirsizer-fsctl` take the same options and print the same results; you choose the one you want, and neither ever falls back to the other. Run any tool with `--help` (`dirsizer-inspect --help` is the most detailed).
+
+### Elevation
+
+All three tools read raw NTFS metadata, so each executable carries a manifest that requires Administrator (`requireAdministrator`): Windows asks for elevation (UAC) when you start one. There is no `runas` logic in the code. In an already elevated terminal they simply run. `dirsizer-bulk` and `dirsizer-inspect` also enable `SeBackupPrivilege` inside the process, and report a clear error if the account does not hold it.
+
+One consequence you should know about: Windows cannot start a program that requires elevation *in place* from a non-elevated console. PowerShell reports that the operation requires elevation, and other launchers open a separate elevated window, where you cannot redirect or pipe the output. To use `> result.json` or a pipe, open an Administrator terminal first. (This behaviour comes from Windows; it has not been tested for these executables.) The manifest is the single file `app.manifest`; changing `level` there to `asInvoker` removes the requirement for all three.
 
 ## Build
 
-Install the .NET 8 SDK and publish a small NativeAOT executable:
+Install the .NET 8 SDK. Each tool is its own project:
+
+| Project | Executable |
+| --- | --- |
+| `DirSizer.Bulk.csproj` | `dirsizer-bulk` |
+| `DirSizer.Fsctl.csproj` | `dirsizer-fsctl` |
+| `DirSizer.Inspect.csproj` | `dirsizer-inspect` |
+
+Publish a small NativeAOT executable (this needs the Visual Studio C++ build tools):
 
 ```powershell
-dotnet publish -c Release -r win-x64
+dotnet publish DirSizer.Bulk.csproj -c Release -r win-x64
 ```
 
-The executable is under `bin\Release\net8.0-windows\win-x64\publish\`. NativeAOT removes the runtime dependency and enables trimming.
+The executable is under `bin\Release\net8.0-windows\win-x64\publish\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all three (see "Releases").
 
-For a fast local compile:
-
-```powershell
-dotnet build DirSizer.csproj -c Release
-```
-
-Build the experimental raw-MFT executable separately:
+For a fast local compile, name the project (a bare `dotnet build` in this folder is ambiguous):
 
 ```powershell
 dotnet build DirSizer.Bulk.csproj -c Release
-dotnet bin\Bulk\Release\net8.0-windows\win-x64\DirSizer.Bulk.dll T:
+dotnet bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll T:
 ```
 
-The bulk executable is experimental and does not fall back to the FSCTL reader.
-It runs the same merge, relationship, and aggregation code as the FSCTL reader
-(`DirSizer.Core`) and prints the same listing: `--top=N`, `--files`, `--dirs`,
-plus `--benchmark` (phase timings), `--diagnostics` (unresolved records) and
-`--root-children`. Reader diagnostics go to stderr, results to stdout.
-`--diagnose` prints a per-reason breakdown of records the parser rejected.
-The scan compares the MFT layout before and after reading it and rescans once if
-it changed. Exit code 0 means the layout was unchanged; 3 means it changed even
-after the retry, so the printed results are not a consistent snapshot. This
-detects MFT growth and relocation, not changes inside existing records.
-See [design_mft.md](design_mft.md) for its extent, USA-fixup, record-order, and
-acceptance design and the measured results.
+See [design_mft.md](design_mft.md) for how the bulk reader works (extents, USA fixup, record order, live-volume check), the layout of the three tools, and the measured results.
 
-Verify the bulk reader against the FSCTL reader on a quiescent test volume, and
-compare their speed on any volume:
+Verify the two scan tools against each other on a quiescent test volume (a small NTFS volume labelled `NTFSTEST`), and compare their speed on any volume:
 
 ```powershell
-.\scripts\Get-ReferenceSnapshot.ps1 -Volume T: -Out ref.txt          # FSCTL output, timings removed
-.\scripts\Compare-BulkToSnapshot.ps1 -Volume T: -Snapshot ref.txt    # exit code 0 = EQUAL
-.\scripts\Compare-Benchmark.ps1 -Volume C: -Runs 5                   # alternating, min/median/max
-.\scripts\Test-BulkInstability.ps1 -Volume T:                        # grows the MFT of a disposable NTFSTEST volume; see the script header
+.\scripts\New-AbFixture.ps1 -Volume T:                                # creates a fixture with links, streams, sparse and compressed files, deleted files
+.\scripts\Compare-Readers.ps1 -Volume T:                              # dirsizer-fsctl vs dirsizer-bulk, JSON and text; exit code 0 = EQUAL
+.\scripts\Compare-Benchmark.ps1 -Volume C: -Runs 5                    # alternating, min/median/max per phase
+.\scripts\Test-BulkInstability.ps1 -Volume T:                         # grows the MFT of a disposable NTFSTEST volume; see the script header
 ```
 
-The snapshot script is also the regression check for refactoring the shared
-code: take a snapshot before, take one after, and they must be identical.
-
-To compare the two readers record by record on a quiescent test volume (a small
-NTFS volume labelled `NTFSTEST`), build the fixture and run the developer tool:
+`scripts\Get-ReferenceSnapshot.ps1` captures a tool's complete output with timings removed; it is also the regression check for refactoring the shared code: take a snapshot before, take one after, and they must be identical. To compare the two readers record by record, build and run the developer tool:
 
 ```powershell
-.\scripts\New-AbFixture.ps1 -Volume T:
 dotnet build DirSizer.Compare.csproj -c Release
 dotnet bin\Compare\Release\net8.0-windows\win-x64\DirSizer.Compare.exe T:
 ```
 
-Run the deterministic parser fixtures with:
+Each tool has built-in tests that need no volume:
 
 ```powershell
-dotnet .\bin\Release\net8.0-windows\win-x64\DirSizer.dll --self-test
+dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-fsctl.dll --self-test
+dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll --self-test
+dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-inspect.dll --self-test
 ```
-
 ## Releases
 
-The version is defined in `DirSizer.csproj`. To build and package the current
+The version is defined once, in `Directory.Build.props`. To build and package the current
 version without publishing it:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1
 ```
 
-This creates `dist\DirSizer-v<version>-win-x64.zip` containing the NativeAOT
-executable and this README. To create the GitHub release, install and sign in
+This creates `dist\DirSizer-v<version>-win-x64.zip` containing the three NativeAOT
+executables (dirsizer-bulk.exe, dirsizer-fsctl.exe, dirsizer-inspect.exe), this README, and the license. To create the GitHub release, install and sign in
 with GitHub CLI (`gh auth login`), create a Markdown release-notes file, and
 run:
 
@@ -104,14 +103,14 @@ release.
 
 ## Usage
 
-Run from an Administrator PowerShell:
+Run from an Administrator terminal (see "Elevation"). `dirsizer-bulk` and `dirsizer-fsctl` share these options; `dirsizer-inspect` has its own (`dirsizer-inspect --help`):
 
 ```powershell
-.\dirsizer.exe C:\
-.\dirsizer.exe D:\ --top=50 --files
-.\dirsizer.exe C:\ --top=100 --json > result.json
-.\dirsizer.exe C:\ --top=1 --json --benchmark
-.\dirsizer.exe C:\ --reader=bulk          # experimental raw-MFT reader, see "Readers"
+.\dirsizer-bulk.exe C:\
+.\dirsizer-bulk.exe D:\ --top=50 --files
+.\dirsizer-bulk.exe C:\ --top=100 --json > result.json
+.\dirsizer-fsctl.exe C:\ --top=1 --json --benchmark
+.\dirsizer-inspect.exe C: --record 5
 ```
 
 The default is `--top=25`. The table output identifies the selected limit and
@@ -124,52 +123,37 @@ could not be reconstructed and it was not a known NTFS metadata record.
 
 Progress is rendered on one updating line to stderr as `current/estimated (percent%)`. This keeps stdout suitable for table output or JSON redirection.
 
-## Readers
+## dirsizer-bulk (experimental)
 
-`--reader=fsctl` (the default) asks NTFS for one MFT record at a time with
-`FSCTL_GET_NTFS_FILE_RECORD`. It is the reference implementation: correctness is
-defined by it.
+`dirsizer-bulk` reads the raw `$MFT` from the volume in large blocks (the record offsets come from the `$MFT` extent map) and then runs exactly the same parsing, merging, relationship, aggregation, and output code as `dirsizer-fsctl`. In measurements on one machine it was about 1.4x faster on a live C: volume (median 1.37x to 1.52x in five benchmark sessions; per pair mostly 1.36x to 1.59x, and 2.14x once when the FSCTL run in that pair was unusually slow). All of the saving is in reading the MFT; parsing and merging cost the same. Do not treat the figure as a guarantee: it has only been measured on one machine and one volume, with a warm file cache.
 
-`--reader=bulk` is **experimental**. It reads the raw `$MFT` from the volume in
-large blocks (the record offsets come from the `$MFT` extent map) and then runs
-exactly the same parsing, merging, relationship, aggregation, and output code as
-the FSCTL reader. Like the FSCTL reader it needs an elevated terminal and an NTFS
-volume. In measurements on one machine it was about 1.4x faster on a live C:
-volume (median 1.37x to 1.52x in four benchmark sessions; per run 1.36x to
-1.59x). All of the saving is in reading the MFT; parsing and merging cost the
-same. Do not treat the figure as a guarantee: it has only been measured on one
-machine and one volume, with a warm file cache.
+- **No fallback.** If the raw read fails, `dirsizer-bulk` reports the error and exits with 1. It never switches to `dirsizer-fsctl` on its own.
+- **Same result.** On a quiescent NTFS test volume the complete output of `dirsizer-bulk` (root size, every directory and file with path, size, and order, the root's children, counters, unresolved records) is identical to that of `dirsizer-fsctl`, in the JIT and the NativeAOT build. `scripts\Compare-Readers.ps1` checks this.
+- **Live-volume check.** `dirsizer-bulk` records the MFT layout (volume serial number, geometry, valid data length, and extent map) before and after reading and rescans once if it changed. This detects the MFT growing or being relocated while it is read. It does **not** detect files being created, deleted, or changed inside existing records during the scan; a live volume can always change under either tool.
 
-- **No fallback.** If the raw read fails, `--reader=bulk` reports the error and exits
-  with 1. It never switches to the FSCTL reader on its own.
-- **Same result.** On a quiescent NTFS test volume the bulk reader's complete
-  output (root size, every directory and file with path, size, and order, the
-  root's children, counters, unresolved records) is identical to the FSCTL
-  reader's, including in the NativeAOT build. `scripts\Compare-Readers.ps1` checks
-  this through the CLI.
-- **Live-volume check.** The bulk reader records the MFT layout (volume serial
-  number, geometry, valid data length, and extent map) before and after reading
-  and rescans once if it changed. This detects the MFT growing or being
-  relocated while it is read. It does **not** detect files being created,
-  deleted, or changed inside existing records during the scan; a live volume can
-  always change under either reader.
-
-Exit codes:
+Exit codes of `dirsizer-bulk` (`dirsizer-fsctl` uses 0 and 1):
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | The result was produced. For `--reader=bulk` the MFT layout did not change during the scan. |
+| 0 | The result was produced and the MFT layout did not change during the scan. |
 | 1 | An error (bad option, invalid volume, not NTFS, no access, I/O failure); no result. |
-| 3 | `--reader=bulk` only. The result was produced, but the MFT layout changed during the scan even after one rescan, so the result should not be treated as a stable snapshot. A warning is written to stderr. This is not an error like exit code 1: the output is complete, only its consistency is not guaranteed. |
+| 3 | The result was produced, but the MFT layout changed during the scan even after one rescan, so the result should not be treated as a stable snapshot. A warning is written to stderr. This is not an error like exit code 1: the output is complete, only its consistency is not guaranteed. |
 
-With `--json`, the output has a `reader` field (`fsctl` or `bulk`). For `bulk`
-there is also a `bulk` object with the scan stability (`stable` or `unstable`),
-the number of attempts, the layout change that was seen, the phase timings, and
-the slot counts. For `bulk`, `records_scanned` is the number of MFT slots
-examined, `records_skipped` counts slots that could not be read or parsed, and
-`statistics.performance.query_ms` is the whole acquisition phase (extents, raw
-read, USA fixup, layout re-check).
+With `--json`, both tools write a `reader` field (`fsctl` or `bulk`). `dirsizer-bulk` also writes a `bulk` object with the scan stability (`stable` or `unstable`), the number of attempts, the layout change that was seen, the phase timings, and the slot counts. For `dirsizer-bulk`, `records_scanned` is the number of MFT slots examined, `records_skipped` counts slots that could not be read or parsed, and `statistics.performance.query_ms` is the whole acquisition phase (extents, raw read, USA fixup, layout re-check).
 
+## dirsizer-inspect
+
+A read-only tool for looking inside the NTFS master file table. `dirsizer-inspect --help` lists everything with the terms explained. In short:
+
+```powershell
+dirsizer-inspect C:                         # volume geometry, MFT size, number of record slots and extents
+dirsizer-inspect C: --mft-extents           # every extent of the $MFT
+dirsizer-inspect C: --slots [--diagnose]    # count slots: in use, deleted, unused, damaged
+dirsizer-inspect C: --record 5 [--dump] [--raw]   # one record: header, update sequence array, every attribute
+dirsizer-inspect C: --compare 12345         # the same record through the raw read and through FSCTL
+```
+
+`--record` shows a record's `$FILE_NAME` names with parent and namespace, its `$DATA` streams, and its `$ATTRIBUTE_LIST` entries, including the extension records a large list (for example a file with many hard links) points to, together with the model the shared parser builds from the record. A record number is decimal or `0x`-prefixed hexadecimal; `fsutil file queryFileID` gives a file's record number (its low 48 bits). Exit codes: 0 ok, 1 error, 2 `--compare` found a difference.
 ## Semantics and limitations
 
 - **Logical size** = the file size: the amount of file content.

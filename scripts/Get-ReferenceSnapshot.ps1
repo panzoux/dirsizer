@@ -1,31 +1,31 @@
 <#
 .SYNOPSIS
-  Captures a deterministic snapshot of the FSCTL reference executable's output for regression checks.
+  Captures a deterministic snapshot of a usage-scan tool's output for regression checks.
 
 .DESCRIPTION
-  Runs DirSizer.dll with --json --dirs --files --diagnostics and a very large --top on a QUIESCENT volume, so the output
-  lists every directory, every file with data, all root children, all counters, and every unresolved record. Timing and
-  memory measurements are removed because they differ from run to run; everything else (paths, sizes, ordering,
-  relationship counters, samples) is kept. Two snapshots of an unchanged volume must be identical, and a refactor that
-  does not change behaviour must not change the snapshot.
+  Runs dirsizer-fsctl (or dirsizer-bulk) with --json --dirs --files --diagnostics and a very large --top on a QUIESCENT
+  volume, so the output lists every directory, every file with data, all root children, all counters, and every
+  unresolved record. Timing and memory measurements are removed because they differ from run to run; everything else
+  (paths, sizes, ordering, relationship counters, samples) is kept. Two snapshots of an unchanged volume must be
+  identical, and a refactor that does not change behaviour must not change the snapshot.
 
   Use -Out to write the snapshot, then compare snapshots with Compare-Object or fc.exe.
 #>
 param(
     [string]$Volume = 'T:',
-    [string]$Dll = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\DirSizer.dll'),
-    [ValidateSet('', 'fsctl', 'bulk')][string]$Reader = '',   # empty = the CLI default
+    [ValidateSet('fsctl', 'bulk')][string]$Tool = 'fsctl',
+    # A .dll is run through the dotnet host, an .exe (for example a NativeAOT publish) directly. Default: the Release build of -Tool.
+    [string]$Path = '',
     [Parameter(Mandatory)][string]$Out
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Path) { $Path = Join-Path $PSScriptRoot "..\bin\Release\net8.0-windows\win-x64\dirsizer-$Tool.dll" }
 
 $stderrFile = [IO.Path]::GetTempFileName()
 try {
-    # A path ending in .exe (for example a NativeAOT publish) is run directly; a .dll is run through the dotnet host.
     $cliArguments = @($Volume, '--json', '--dirs', '--files', '--top=1000000', '--diagnostics')
-    if ($Reader) { $cliArguments += "--reader=$Reader" }
-    $stdout = if ($Dll -like "*.exe") { & $Dll @cliArguments 2> $stderrFile } else { & dotnet $Dll @cliArguments 2> $stderrFile }
-    if ($LASTEXITCODE -ne 0) { throw "DirSizer exited with $LASTEXITCODE" }
+    $stdout = if ($Path -like '*.exe') { & $Path @cliArguments 2> $stderrFile } else { & dotnet $Path @cliArguments 2> $stderrFile }
+    if ($LASTEXITCODE -ne 0) { throw "$Path exited with $LASTEXITCODE" }
     $document = $stdout | ConvertFrom-Json
     $performance = $document.statistics.performance
     foreach ($name in @($performance.PSObject.Properties.Name)) {

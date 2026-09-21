@@ -32,7 +32,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Project = Join-Path $Repo 'DirSizer.csproj'
+# The release contains three tools. Each is published as its own NativeAOT executable.
+$Tools = @(
+    @{ Project = 'DirSizer.Fsctl.csproj';   Exe = 'dirsizer-fsctl.exe' },
+    @{ Project = 'DirSizer.Bulk.csproj';    Exe = 'dirsizer-bulk.exe' },
+    @{ Project = 'DirSizer.Inspect.csproj'; Exe = 'dirsizer-inspect.exe' }
+)
+$VersionFile = Join-Path $Repo 'Directory.Build.props'
 $Dist = Join-Path $Repo 'dist'
 $Runtime = 'win-x64'
 $FetchRemote = 'origin'
@@ -43,11 +49,11 @@ function Invoke-Native([string]$What, [scriptblock]$Command) {
     if ($LASTEXITCODE -ne 0) { throw "$What failed (exit code $LASTEXITCODE)" }
 }
 
-if (-not (Test-Path $Project)) { throw "project not found: $Project" }
-
-[xml]$projectXml = Get-Content $Project -Raw
+foreach ($tool in $Tools) { if (-not (Test-Path (Join-Path $Repo $tool.Project))) { throw "project not found: $($tool.Project)" } }
+if (-not (Test-Path $VersionFile)) { throw "version file not found: $VersionFile" }
+[xml]$projectXml = Get-Content $VersionFile -Raw
 $versionNode = $projectXml.Project.PropertyGroup.Version | Select-Object -First 1
-if (-not $versionNode) { throw 'no <Version>...</Version> in DirSizer.csproj' }
+if (-not $versionNode) { throw 'no <Version>...</Version> in Directory.Build.props' }
 $Version = $versionNode.ToString().Trim()
 if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
     throw "invalid project version: $Version"
@@ -56,8 +62,7 @@ $Tag = "v$Version"
 $PackageName = "DirSizer-$Tag-$Runtime"
 $Stage = Join-Path $Dist $PackageName
 $Zip = Join-Path $Dist "$PackageName.zip"
-$PublishDir = Join-Path $Repo "bin\Release\net8.0-windows\$Runtime\publish"
-$Exe = Join-Path $PublishDir 'DirSizer.exe'
+$PublishRoot = Join-Path $Dist 'publish'
 
 if ($Publish) {
     if (-not $NotesFile) { throw '-Publish needs -NotesFile <release notes.md>' }
@@ -73,20 +78,26 @@ if ($Publish) {
     if ($LASTEXITCODE -ne 0) { throw 'GitHub repository panzoux/dirsizer was not found. Create it or update the repository name in scripts\release.ps1.' }
 
     & git -C $Repo rev-parse -q --verify "refs/tags/$Tag" | Out-Null
-    if ($LASTEXITCODE -eq 0) { throw "tag $Tag already exists locally -- bump <Version> in DirSizer.csproj" }
+    if ($LASTEXITCODE -eq 0) { throw "tag $Tag already exists locally -- bump <Version> in Directory.Build.props" }
     $remoteTag = & git -C $Repo ls-remote --tags $FetchRemote "refs/tags/$Tag"
     if ($remoteTag) { throw "tag $Tag already exists on $FetchRemote" }
 }
 
 Write-Host "DirSizer $Tag -- runtime: $Runtime" -ForegroundColor Cyan
 Write-Host "`n-- dotnet publish --" -ForegroundColor Cyan
-Invoke-Native 'dotnet publish' { dotnet publish $Project -c Release -r $Runtime --self-contained true }
-if (-not (Test-Path $Exe)) { throw "published executable not found: $Exe" }
+if (Test-Path $PublishRoot) { Remove-Item $PublishRoot -Recurse -Force }
+foreach ($tool in $Tools) {
+    $project = Join-Path $Repo $tool.Project
+    $out = Join-Path $PublishRoot ([IO.Path]::GetFileNameWithoutExtension($tool.Exe))
+    Invoke-Native "dotnet publish $($tool.Project)" { dotnet publish $project -c Release -r $Runtime --self-contained true -o $out }
+    $tool.Published = Join-Path $out $tool.Exe
+    if (-not (Test-Path $tool.Published)) { throw "published executable not found: $($tool.Published)" }
+}
 
 if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 if (Test-Path $Zip) { Remove-Item $Zip -Force }
 New-Item -ItemType Directory -Force $Stage | Out-Null
-Copy-Item $Exe (Join-Path $Stage 'DirSizer.exe')
+foreach ($tool in $Tools) { Copy-Item $tool.Published (Join-Path $Stage $tool.Exe) }
 Copy-Item (Join-Path $Repo 'README.md') (Join-Path $Stage 'README.md')
 Copy-Item (Join-Path $Repo 'LICENSE') (Join-Path $Stage 'LICENSE')
 
