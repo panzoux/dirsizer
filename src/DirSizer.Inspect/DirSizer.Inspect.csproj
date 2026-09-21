@@ -13,21 +13,16 @@
     <DebugType>none</DebugType>
     <StripSymbols>true</StripSymbols>
     <OptimizationPreference>Speed</OptimizationPreference>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ApplicationManifest>..\Shared\app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="InspectProgram.cs" />
-    <Compile Include="RecordInspector.cs" />
-    <Compile Include="RunList.cs" />
-    <Compile Include="InspectSelfTests.cs" />
-    <Compile Include="RecordDiff.cs" />
-    <Compile Include="ConsolePause.cs" />
-    <Compile Include="DriveRoot.cs" />
-    <Compile Include="BulkReader.cs" />
-    <Compile Include="BulkStability.cs" />
-    <Compile Include="BulkScanner.cs" />
-    <Compile Include="BulkReport.cs" />
-    <ProjectReference Include="DirSizer.Core.csproj" />
+    <Compile Include="..\Shared\ConsolePause.cs" />
+    <Compile Include="..\Shared\DriveRoot.cs" />
+    <Compile Include="..\Shared\RecordDiff.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReader.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkStability.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkScanner.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReport.cs" />
+    <ProjectReference Include="..\DirSizer.Core\DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>

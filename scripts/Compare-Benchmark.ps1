@@ -12,8 +12,8 @@
 param(
     [string]$Volume = 'C:',
     [int]$Runs = 5,
-    [string]$FsctlDll = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\dirsizer-fsctl.dll'),
-    [string]$BulkDll = (Join-Path $PSScriptRoot '..\bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll'),
+    [string]$FsctlDll = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll'),
+    [string]$BulkDll = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll'),
     # Extra command-line arguments for each side (none are needed for the two tools).
     [string[]]$FsctlArguments = @(),
     [string[]]$BulkArguments = @()

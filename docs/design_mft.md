@@ -229,9 +229,9 @@ The product is three executables that share `DirSizer.Core`. This replaced an ea
 
 | Tool | Project | Sources |
 | --- | --- | --- |
-| `dirsizer-fsctl` | `DirSizer.Fsctl.csproj` | `FsctlProgram.cs`, `FsctlScanner.cs` (the reference scanner and its FSCTL calls), `Cli.cs`, `DriveRoot.cs`, `SelfTests.cs` |
-| `dirsizer-bulk` | `DirSizer.Bulk.csproj` | `BulkCliProgram.cs`, `BulkIntegration.cs`, `BulkReader.cs`, `BulkStability.cs`, `BulkScanner.cs`, `BulkReport.cs`, `BulkSelfTests.cs`, plus `Cli.cs`, `DriveRoot.cs`, `SelfTests.cs` |
-| `dirsizer-inspect` | `DirSizer.Inspect.csproj` | `InspectProgram.cs`, `RecordInspector.cs`, `RunList.cs`, `InspectSelfTests.cs`, `RecordDiff.cs`, `DriveRoot.cs`, and the bulk reader files |
+| `dirsizer-fsctl` | `src\DirSizer.Fsctl\DirSizer.Fsctl.csproj` | `FsctlProgram.cs`, `FsctlScanner.cs` (the reference scanner and its FSCTL calls), plus the shared `Cli.cs`, `DriveRoot.cs`, `SelfTests.cs`, `ConsolePause.cs` |
+| `dirsizer-bulk` | `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `BulkCliProgram.cs`, `BulkIntegration.cs`, `BulkSelfTests.cs`, plus the shared bulk reader (`BulkReader.cs`, `BulkStability.cs`, `BulkScanner.cs`, `BulkReport.cs`) and `Cli.cs`, `DriveRoot.cs`, `SelfTests.cs`, `ConsolePause.cs` |
+| `dirsizer-inspect` | `src\DirSizer.Inspect\DirSizer.Inspect.csproj` | `InspectProgram.cs`, `RecordInspector.cs`, `RunList.cs`, `InspectSelfTests.cs`, plus the shared `RecordDiff.cs`, `DriveRoot.cs`, `ConsolePause.cs` and the bulk reader files |
 
 `Cli.cs` holds what the two scan tools share: the options, the result types, and the text and JSON output. Reader-specific extras reach it through a small interface (`IScanDetails`), so the shared output code does not know which reader produced a result. `DirSizer.Compare.csproj` (record-by-record comparison of the two readers on a whole volume) and `scripts\` are developer tools and are not shipped; `RecordDiff.cs` is shared between the Compare tool and `dirsizer-inspect --compare`. The split was verified the same way as the earlier extraction: `dirsizer-fsctl`'s complete output was byte-identical to the frozen baseline taken before the split, and `Compare-Readers.ps1` was EQUAL for the two tools in the JIT and NativeAOT builds.
 
@@ -296,9 +296,9 @@ The shipped tools, NativeAOT `dirsizer-fsctl.exe` against `dirsizer-bulk.exe` (f
 `DirSizer.Compare.csproj` builds a developer tool (not part of the product) that compares the two readers record by record on a quiescent NTFS volume. It links `BulkReader.cs`, so the bulk side is the real reader, and it has its own minimal `FSCTL_GET_NTFS_FILE_RECORD` wrapper that mirrors the reference reader's error handling; the bulk executable itself contains no FSCTL record access.
 
 ```powershell
-dotnet build DirSizer.Compare.csproj -c Release
-dotnet bin\Compare\Release\net8.0-windows\win-x64\DirSizer.Compare.exe --self-test
-dotnet bin\Compare\Release\net8.0-windows\win-x64\DirSizer.Compare.exe T:
+dotnet build src\DirSizer.Compare\DirSizer.Compare.csproj -c Release
+dotnet artifacts\bin\DirSizer.Compare\release_win-x64\DirSizer.Compare.exe --self-test
+dotnet artifacts\bin\DirSizer.Compare\release_win-x64\DirSizer.Compare.exe T:
 ```
 
 It runs a bulk pass, then queries FSCTL for every slot, then a second bulk pass; if the two bulk passes differ the volume was not quiescent and the result is reported unstable. For each slot in use it compares:

@@ -34,9 +34,9 @@ $ErrorActionPreference = 'Stop'
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 # The release contains three tools. Each is published as its own NativeAOT executable.
 $Tools = @(
-    @{ Project = 'DirSizer.Fsctl.csproj';   Exe = 'dirsizer-fsctl.exe' },
-    @{ Project = 'DirSizer.Bulk.csproj';    Exe = 'dirsizer-bulk.exe' },
-    @{ Project = 'DirSizer.Inspect.csproj'; Exe = 'dirsizer-inspect.exe' }
+    @{ Project = 'src\DirSizer.Fsctl\DirSizer.Fsctl.csproj';     Exe = 'dirsizer-fsctl.exe' },
+    @{ Project = 'src\DirSizer.Bulk\DirSizer.Bulk.csproj';       Exe = 'dirsizer-bulk.exe' },
+    @{ Project = 'src\DirSizer.Inspect\DirSizer.Inspect.csproj'; Exe = 'dirsizer-inspect.exe' }
 )
 $VersionFile = Join-Path $Repo 'Directory.Build.props'
 $Dist = Join-Path $Repo 'dist'

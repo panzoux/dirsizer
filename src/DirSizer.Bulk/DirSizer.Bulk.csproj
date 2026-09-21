@@ -13,8 +13,7 @@
     <DebugType>none</DebugType>
     <StripSymbols>true</StripSymbols>
     <OptimizationPreference>Speed</OptimizationPreference>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ApplicationManifest>..\Shared\app.manifest</ApplicationManifest>
   </PropertyGroup>
   <!-- The only build that contains the test-only environment-variable hooks (see BulkIntegration.cs). Never used for a release. -->
   <PropertyGroup Condition="'$(Configuration)' == 'TestHooks'">
@@ -22,17 +21,14 @@
     <Optimize>true</Optimize>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="BulkCliProgram.cs" />
-    <Compile Include="BulkIntegration.cs" />
-    <Compile Include="BulkReader.cs" />
-    <Compile Include="BulkStability.cs" />
-    <Compile Include="BulkScanner.cs" />
-    <Compile Include="BulkReport.cs" />
-    <Compile Include="BulkSelfTests.cs" />
-    <Compile Include="ConsolePause.cs" />
-    <Compile Include="Cli.cs" />
-    <Compile Include="DriveRoot.cs" />
-    <Compile Include="SelfTests.cs" />
-    <ProjectReference Include="DirSizer.Core.csproj" />
+    <Compile Include="..\Shared\ConsolePause.cs" />
+    <Compile Include="..\Shared\Cli.cs" />
+    <Compile Include="..\Shared\DriveRoot.cs" />
+    <Compile Include="..\Shared\SelfTests.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReader.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkStability.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkScanner.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReport.cs" />
+    <ProjectReference Include="..\DirSizer.Core\DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>

@@ -6,7 +6,7 @@
 
 ## ライセンス
 
-DirSizer は MIT ライセンスの下で公開されています。詳細は [LICENSE](https://www.google.com/search?q=LICENSE&utm_source=gemini) を参照してください。
+DirSizer は MIT ライセンスの下で公開されています。詳細は [LICENSE](LICENSE) を参照してください。
 
 ## ステータス
 
@@ -39,28 +39,29 @@ Windows の仕様上、非昇格コンソールから昇格が必要なプロセ
 
 | プロジェクト | 生成される実行ファイル |
 | --- | --- |
-| `DirSizer.Bulk.csproj` | `dirsizer-bulk.exe` |
-| `DirSizer.Fsctl.csproj` | `dirsizer-fsctl.exe` |
-| `DirSizer.Inspect.csproj` | `dirsizer-inspect.exe` |
+| `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `dirsizer-bulk.exe` |
+| `src\DirSizer.Fsctl\DirSizer.Fsctl.csproj` | `dirsizer-fsctl.exe` |
+| `src\DirSizer.Inspect\DirSizer.Inspect.csproj` | `dirsizer-inspect.exe` |
 
 依存関係のない単一の NativeAOT 実行ファイルを生成する場合（要 Visual Studio C++ ビルドツール）:
 
 ```powershell
-dotnet publish DirSizer.Bulk.csproj -c Release -r win-x64
+dotnet publish src\DirSizer.Bulk\DirSizer.Bulk.csproj -c Release -r win-x64
 
 ```
 
-成果物は `bin\Release\net8.0-windows\win-x64\publish\` に出力されます。NativeAOT 化によりランタイム非依存となり、コードトリミングが適用されます。全プロジェクトを一貫してパブリッシュする場合は `scripts\release.ps1` を使用してください。
+成果物は `artifacts\publish\DirSizer.Bulk\release_win-x64\` に出力されます。NativeAOT 化によりランタイム非依存となり、コードトリミングが適用されます。全プロジェクトを一貫してパブリッシュする場合は `scripts\release.ps1` を使用してください。
 
-ローカル開発での素早いコンパイル（※カレントディレクトリで単に `dotnet build` を実行するとプロジェクトが特定できずエラーになるため、明示指定が必要です）:
+ローカル開発での素早いコンパイルには、ソリューション（`DirSizer.sln`。全ツールと開発者向けツールを含みます）または個別のプロジェクトをビルドします。各プロジェクトは専用のフォルダー `artifacts\bin\<project>\release_win-x64\` に出力されます:
 
 ```powershell
-dotnet build DirSizer.Bulk.csproj -c Release
-dotnet bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll T:
+dotnet build -c Release
+dotnet build src\DirSizer.Bulk\DirSizer.Bulk.csproj -c Release
+dotnet artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll T:
 
 ```
 
-Bulk リーダーの内部構造（エクステント、USA フィックスアップ、レコード順序、ライブボリュームの検証機構）、コンポーネント構成、ベンチマーク測定結果の詳細は [design_mft.md](https://www.google.com/search?q=design_mft.md&utm_source=gemini) (英語) を参照してください。
+Bulk リーダーの内部構造（エクステント、USA フィックスアップ、レコード順序、ライブボリュームの検証機構）、コンポーネント構成、ベンチマーク測定結果の詳細は [docs/design_mft.md](docs/design_mft.md) (英語) を参照してください。
 
 静止状態のテスト用ボリューム（`NTFSTEST` ラベル付き）を利用した相互検証およびベンチマークスクリプト:
 
@@ -75,18 +76,36 @@ Bulk リーダーの内部構造（エクステント、USA フィックスア�
 リファクタリング時のデグレ（回帰）チェックには `scripts\Get-ReferenceSnapshot.ps1` を使用します。変更前後のスナップショットを出力・比較することで、実行時間等の変動要素を除いた同一性を保証できます。レコードレベルでの詳細比較を行う場合は、以下の比較ツールをビルドして実行します:
 
 ```powershell
-dotnet build DirSizer.Compare.csproj -c Release
-dotnet bin\Compare\Release\net8.0-windows\win-x64\DirSizer.Compare.exe T:
+dotnet build src\DirSizer.Compare\DirSizer.Compare.csproj -c Release
+dotnet artifacts\bin\DirSizer.Compare\release_win-x64\DirSizer.Compare.exe T:
 
 ```
 
 実ボリュームを必要としないセルフテスト機能も各ツールに組み込まれています:
 
 ```powershell
-dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-fsctl.dll --self-test
-dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll --self-test
-dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-inspect.dll --self-test
+dotnet .\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll --self-test
+dotnet .\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll --self-test
+dotnet .\artifacts\bin\DirSizer.Inspect\release_win-x64\dirsizer-inspect.dll --self-test
 
+```
+
+## リポジトリの構成
+
+```
+DirSizer.sln                 すべてのプロジェクト
+Directory.Build.props        バージョン（1 か所）と、共通のビルド出力の設定
+src\DirSizer.Fsctl\          dirsizer-fsctl
+src\DirSizer.Bulk\           dirsizer-bulk
+src\DirSizer.Inspect\        dirsizer-inspect
+src\DirSizer.Compare\        開発者向けツール: 2 つのリーダーのレコード単位の比較
+src\DirSizer.Core\           リーダーに依存しないパイプライン（マージ、関係解決、集計）
+src\Shared\                  複数のツールにコンパイルされるファイル（オプションと出力、ConsolePause、app.manifest など）
+src\Shared\BulkReader\       生の $MFT リーダー。dirsizer-bulk、dirsizer-inspect、開発者向けツールが共有
+scripts\                     ベンチマーク、比較、リリースのスクリプト
+docs\                        設計メモとロードマップ
+artifacts\                   ビルド出力（git 管理外）
+dist\                        リリースパッケージ（git 管理外）
 ```
 
 ## リリリースプロセス

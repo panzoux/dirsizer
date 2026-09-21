@@ -19,7 +19,7 @@ param(
     [Parameter(Mandatory)][string]$Out
 )
 $ErrorActionPreference = 'Stop'
-if (-not $Path) { $Path = Join-Path $PSScriptRoot "..\bin\Release\net8.0-windows\win-x64\dirsizer-$Tool.dll" }
+if (-not $Path) { $Path = Join-Path $PSScriptRoot "..\artifacts\bin\DirSizer.$((Get-Culture).TextInfo.ToTitleCase($Tool))\release_win-x64\dirsizer-$Tool.dll" }
 
 $stderrFile = [IO.Path]::GetTempFileName()
 try {

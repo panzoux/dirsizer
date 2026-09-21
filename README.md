@@ -36,26 +36,27 @@ Install the .NET 8 SDK. Each tool is its own project:
 
 | Project | Executable |
 | --- | --- |
-| `DirSizer.Bulk.csproj` | `dirsizer-bulk` |
-| `DirSizer.Fsctl.csproj` | `dirsizer-fsctl` |
-| `DirSizer.Inspect.csproj` | `dirsizer-inspect` |
+| `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `dirsizer-bulk` |
+| `src\DirSizer.Fsctl\DirSizer.Fsctl.csproj` | `dirsizer-fsctl` |
+| `src\DirSizer.Inspect\DirSizer.Inspect.csproj` | `dirsizer-inspect` |
 
 Publish a small NativeAOT executable (this needs the Visual Studio C++ build tools):
 
 ```powershell
-dotnet publish DirSizer.Bulk.csproj -c Release -r win-x64
+dotnet publish src\DirSizer.Bulk\DirSizer.Bulk.csproj -c Release -r win-x64
 ```
 
-The executable is under `bin\Release\net8.0-windows\win-x64\publish\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all three (see "Releases").
+The executable is under `artifacts\publish\DirSizer.Bulk\release_win-x64\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all three (see "Releases").
 
-For a fast local compile, name the project (a bare `dotnet build` in this folder is ambiguous):
+For a fast local compile, build the solution (`DirSizer.sln`, every tool and the developer tool) or one project. Each project builds into its own folder, `artifacts\bin\<project>\release_win-x64\`:
 
 ```powershell
-dotnet build DirSizer.Bulk.csproj -c Release
-dotnet bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll T:
+dotnet build -c Release
+dotnet build src\DirSizer.Bulk\DirSizer.Bulk.csproj -c Release
+dotnet artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll T:
 ```
 
-See [design_mft.md](design_mft.md) for how the bulk reader works (extents, USA fixup, record order, live-volume check), the layout of the three tools, and the measured results.
+See [docs/design_mft.md](docs/design_mft.md) for how the bulk reader works (extents, USA fixup, record order, live-volume check), the layout of the three tools, and the measured results.
 
 Verify the two scan tools against each other on a quiescent test volume (a small NTFS volume labelled `NTFSTEST`), and compare their speed on any volume:
 
@@ -69,17 +70,36 @@ Verify the two scan tools against each other on a quiescent test volume (a small
 `scripts\Get-ReferenceSnapshot.ps1` captures a tool's complete output with timings removed; it is also the regression check for refactoring the shared code: take a snapshot before, take one after, and they must be identical. To compare the two readers record by record, build and run the developer tool:
 
 ```powershell
-dotnet build DirSizer.Compare.csproj -c Release
-dotnet bin\Compare\Release\net8.0-windows\win-x64\DirSizer.Compare.exe T:
+dotnet build src\DirSizer.Compare\DirSizer.Compare.csproj -c Release
+dotnet artifacts\bin\DirSizer.Compare\release_win-x64\DirSizer.Compare.exe T:
 ```
 
 Each tool has built-in tests that need no volume:
 
 ```powershell
-dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-fsctl.dll --self-test
-dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-bulk.dll --self-test
-dotnet .\bin\Release\net8.0-windows\win-x64\dirsizer-inspect.dll --self-test
+dotnet .\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll --self-test
+dotnet .\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll --self-test
+dotnet .\artifacts\bin\DirSizer.Inspect\release_win-x64\dirsizer-inspect.dll --self-test
 ```
+
+## Repository layout
+
+```
+DirSizer.sln                 all projects
+Directory.Build.props        the version (one place) and the shared build output settings
+src\DirSizer.Fsctl\          dirsizer-fsctl
+src\DirSizer.Bulk\           dirsizer-bulk
+src\DirSizer.Inspect\        dirsizer-inspect
+src\DirSizer.Compare\        developer tool: record-by-record comparison of the two readers
+src\DirSizer.Core\           the reader-independent pipeline (merge, relationships, aggregation)
+src\Shared\                  files compiled into more than one tool (options and output, ConsolePause, app.manifest, ...)
+src\Shared\BulkReader\       the raw $MFT reader, shared by dirsizer-bulk, dirsizer-inspect and the developer tool
+scripts\                     benchmark, comparison and release scripts
+docs\                        design notes and the roadmap
+artifacts\                   build output (git-ignored)
+dist\                        release packages (git-ignored)
+```
+
 ## Releases
 
 The version is defined once, in `Directory.Build.props`. To build and package the current

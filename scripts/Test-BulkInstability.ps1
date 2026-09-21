@@ -26,7 +26,7 @@
 [CmdletBinding()]
 param(
     [string]$Volume = 'T:',
-    [string]$BulkDll = (Join-Path $PSScriptRoot '..\bin\TestHooks\net8.0-windows\win-x64\dirsizer-bulk.dll'),
+    [string]$BulkDll = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\testhooks_win-x64\dirsizer-bulk.dll'),
     [int]$MaxFilesPerRound = 12000,
     [switch]$AllowAnyLabel
 )
@@ -40,7 +40,7 @@ $work = "${letter}:\instab-test"
 $failures = 0
 
 "building the TestHooks configuration of dirsizer-bulk..."
-& dotnet build (Join-Path $PSScriptRoot '..\DirSizer.Bulk.csproj') -c TestHooks --nologo -v q | Out-Host
+& dotnet build (Join-Path $PSScriptRoot '..\src\DirSizer.Bulk\DirSizer.Bulk.csproj') -c TestHooks --nologo -v q | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'building the TestHooks configuration failed' }
 
 # Runs dirsizer-bulk once. Returns exit code, stderr, stdout, and the parsed JSON.

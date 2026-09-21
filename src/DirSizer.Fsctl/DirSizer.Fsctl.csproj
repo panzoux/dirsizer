@@ -13,16 +13,13 @@
     <DebugType>none</DebugType>
     <StripSymbols>true</StripSymbols>
     <OptimizationPreference>Speed</OptimizationPreference>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ApplicationManifest>..\Shared\app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="FsctlProgram.cs" />
-    <Compile Include="FsctlScanner.cs" />
-    <Compile Include="ConsolePause.cs" />
-    <Compile Include="Cli.cs" />
-    <Compile Include="DriveRoot.cs" />
-    <Compile Include="SelfTests.cs" />
-    <ProjectReference Include="DirSizer.Core.csproj" />
+    <Compile Include="..\Shared\ConsolePause.cs" />
+    <Compile Include="..\Shared\Cli.cs" />
+    <Compile Include="..\Shared\DriveRoot.cs" />
+    <Compile Include="..\Shared\SelfTests.cs" />
+    <ProjectReference Include="..\DirSizer.Core\DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>

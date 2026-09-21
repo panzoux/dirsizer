@@ -1,9 +1,9 @@
 <Project>
-  <!-- The projects in this folder share a directory. Give each its own intermediate folder so restores do not overwrite
-       each other's project.assets.json, and keep the nested obj/bin folders out of the default *.cs globs. -->
+  <!-- Every project builds into artifacts\ (artifacts\bin\<project>\<configuration>_<runtime>\, artifacts\obj\<project>\, ...), so the
+       tools no longer share one output folder and their intermediate files cannot overwrite each other. -->
   <PropertyGroup>
-    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
-    <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**;dist\**</DefaultItemExcludes>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
     <!-- One version for every tool; scripts\release.ps1 reads it from here. -->
     <Version>0.5.1</Version>
   </PropertyGroup>

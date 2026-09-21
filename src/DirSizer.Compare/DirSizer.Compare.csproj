@@ -11,13 +11,10 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <BaseOutputPath>bin\Compare\</BaseOutputPath>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="CompareProgram.cs" />
-    <Compile Include="BulkReader.cs" />
-    <Compile Include="RecordDiff.cs" />
-    <ProjectReference Include="DirSizer.Core.csproj" />
+    <Compile Include="..\Shared\RecordDiff.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReader.cs" />
+    <ProjectReference Include="..\DirSizer.Core\DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>
