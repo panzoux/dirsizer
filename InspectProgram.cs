@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Microsoft.Win32.SafeHandles;
 
+ConsolePause.Register();
 try
 {
     return InspectCli.Run(args);

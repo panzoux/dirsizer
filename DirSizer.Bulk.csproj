@@ -29,6 +29,7 @@
     <Compile Include="BulkScanner.cs" />
     <Compile Include="BulkReport.cs" />
     <Compile Include="BulkSelfTests.cs" />
+    <Compile Include="ConsolePause.cs" />
     <Compile Include="Cli.cs" />
     <Compile Include="DriveRoot.cs" />
     <Compile Include="SelfTests.cs" />

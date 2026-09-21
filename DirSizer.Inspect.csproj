@@ -22,6 +22,7 @@
     <Compile Include="RunList.cs" />
     <Compile Include="InspectSelfTests.cs" />
     <Compile Include="RecordDiff.cs" />
+    <Compile Include="ConsolePause.cs" />
     <Compile Include="DriveRoot.cs" />
     <Compile Include="BulkReader.cs" />
     <Compile Include="BulkStability.cs" />

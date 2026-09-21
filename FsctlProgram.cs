@@ -1,5 +1,6 @@
 using System.ComponentModel;
 
+ConsolePause.Register();
 Options options;
 try
 {
