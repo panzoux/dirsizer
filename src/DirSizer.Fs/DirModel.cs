@@ -12,7 +12,10 @@ sealed class DirNode(int id, int parentId, string name)
 
 readonly record struct FileHit(int DirId, string Name, long Size);
 
-// Keeps the `limit` entries with the largest size. Order among equal sizes is unspecified.
+// Keeps the `limit` entries with the largest size. Order among equal sizes is unspecified. Not thread-safe: every worker has its own
+// instance and they are merged after the join. Which sizes are eligible at all (for example only files larger than 0) is the
+// caller's decision; the item and its size are not tied together, because the caller creates the item (a name string) only after
+// WouldAccept has said that it will be kept.
 sealed class BoundedTop<T>(int limit)
 {
     readonly PriorityQueue<T, long> _queue = new();
@@ -35,6 +38,7 @@ sealed class BoundedTop<T>(int limit)
 
     public void AddAll(BoundedTop<T> other)
     {
+        if (ReferenceEquals(other, this)) return;   // Add would change the queue while it is being enumerated
         foreach (var (item, size) in other._queue.UnorderedItems) Add(item, size);
     }
 
@@ -97,7 +101,14 @@ static class DirTable
     public static string RelativePath(DirNode[] nodes, int id)
     {
         var names = new Stack<string>();
-        for (var current = id; current != 0; current = nodes[current].ParentId) names.Push(nodes[current].Name);
+        for (var current = id; current != 0; current = nodes[current].ParentId)
+        {
+            // Aggregate has already validated every table that reaches the output; this turns a corrupt table into an error
+            // instead of an endless loop.
+            if (nodes[current].ParentId < 0 || nodes[current].ParentId >= current)
+                throw new InvalidOperationException($"directory table invariant violated at id {current}: parent id {nodes[current].ParentId}");
+            names.Push(nodes[current].Name);
+        }
         return string.Join('\\', names);
     }
 }
