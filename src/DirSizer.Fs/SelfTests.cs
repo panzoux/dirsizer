@@ -44,7 +44,9 @@ static partial class FsSelfTests
             catch (Exception exception)
             {
                 failed++;
-                Console.WriteLine($"FAIL  {test.Name}: {exception.Message}");
+                // A failed assertion is a plain Exception; anything else is a surprise, so its type is worth seeing.
+                var text = exception.GetType() == typeof(Exception) ? exception.Message : $"{exception.GetType().Name}: {exception.Message}";
+                Console.WriteLine($"FAIL  {test.Name}: {text}");
             }
         }
         Console.WriteLine(failed == 0

@@ -44,6 +44,7 @@ static class Win32Find
 {
     public const uint DirectoryAttribute = 0x10;
     public const uint ReparsePointAttribute = 0x400;
+    public const int ErrorFileNotFound = 2;
     public const int ErrorAccessDenied = 5;
     public const int ErrorNoMoreFiles = 18;
     public const int ErrorInvalidParameter = 87;
@@ -94,7 +95,7 @@ static class Win32Find
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool FindNextFileW(nint hFindFile, ref Win32FindData lpFindFileData);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool FindClose(nint hFindFile);
 }

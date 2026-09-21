@@ -24,6 +24,10 @@ sealed class DirectoryReader(FindFirstFn? findFirst = null)
             first = _findFirst(pattern, ref data, false);
             if (first.Handle != Win32Find.InvalidHandle) _largeFetch = false;
         }
+        // A directory with no entries at all. The root of a FAT or exFAT volume has no "." or ".." entries, so listing an empty one
+        // fails with ERROR_FILE_NOT_FOUND: that is an empty directory, not a failure. (A path that does not exist gives ERROR_PATH_NOT_FOUND.)
+        if (first.Handle == Win32Find.InvalidHandle && first.Error == Win32Find.ErrorFileNotFound)
+            return new ReadResult(ReadOutcome.Complete, 0);
         if (first.Handle == Win32Find.InvalidHandle)
             return new ReadResult(first.Error == Win32Find.ErrorAccessDenied ? ReadOutcome.Denied : ReadOutcome.Failed, first.Error);
 
