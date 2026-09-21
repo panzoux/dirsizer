@@ -15,7 +15,7 @@ static partial class FsSelfTests
     {
         var zero = TimeSpan.Zero;
         var counters = new FsCounters(5, denied, failed, 1, 8, 20, 1234);
-        var metrics = new FsMetrics(zero, TimeSpan.FromSeconds(1), zero, zero, TimeSpan.FromSeconds(1), zero, zero, 4, true, 0, 30, 8, 1234, 0, 0);
+        var metrics = new FsMetrics(zero, TimeSpan.FromSeconds(1), zero, zero, TimeSpan.FromSeconds(1), zero, zero, 4, true, "find", 0, 30, 8, 1234, 0, 0);
         return new FsResult(@"C:\r", new ResultItem(@"C:\r", 1234), [], [new ResultItem(@"C:\r", 1234)], [], counters, metrics, samples, [new DirNode(0, -1, @"C:\r")]);
     }
 
@@ -88,7 +88,7 @@ static partial class FsSelfTests
         Assert(output.Contains($"bytes={result.Root.Size}"), "summary shows the byte total");
         Assert(output.Contains("directories_denied=0 directories_failed=0"), "summary shows the error counters");
         Assert(output.Contains("7,011"), "sizes are grouped");
-        Assert(error.ToString().Contains("benchmark: workers=2"), "--benchmark prints the timings to stderr");
+        Assert(error.ToString().Contains("benchmark: workers=2, enumerator=find, large_fetch=on"), "--benchmark prints the enumerator and the timings to stderr");
         Assert(!error.ToString().Contains("warning"), "no warning when every directory was read");
 
         var plain = new StringWriter();
@@ -120,7 +120,7 @@ static partial class FsSelfTests
         foreach (var name in new[] { "directories_scanned", "directories_denied", "directories_failed", "reparse_skipped", "files", "error_samples" })
             Assert(statistics.TryGetProperty(name, out _), $"statistics.{name} is present");
         var performance = statistics.GetProperty("performance");
-        foreach (var name in new[] { "open_ms", "walk_ms", "aggregation_ms", "finalize_ms", "other_ms", "total_ms", "phase_sum_ms", "enum_ms_total", "idle_ms_total", "workers", "large_fetch", "peak_queued_dirs", "managed_allocated_bytes", "peak_working_set_bytes", "entries_per_sec", "directories_per_sec", "logical_mib_per_sec" })
+        foreach (var name in new[] { "open_ms", "walk_ms", "aggregation_ms", "finalize_ms", "other_ms", "total_ms", "phase_sum_ms", "enum_ms_total", "idle_ms_total", "workers", "large_fetch", "enumerator", "peak_queued_dirs", "managed_allocated_bytes", "peak_working_set_bytes", "entries_per_sec", "directories_per_sec", "logical_mib_per_sec" })
             Assert(performance.TryGetProperty(name, out _), $"performance.{name} is present");
         AssertEqual(2, performance.GetProperty("workers").GetInt32(), "performance.workers");
         Assert(performance.GetProperty("large_fetch").ValueKind is JsonValueKind.True or JsonValueKind.False, "performance.large_fetch is a JSON boolean");

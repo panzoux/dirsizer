@@ -15,6 +15,7 @@ static partial class FsSelfTests
     static partial void AddCliTests(List<SelfTest> tests);
     static partial void AddModelTests(List<SelfTest> tests);
     static partial void AddReaderTests(List<SelfTest> tests);
+    static partial void AddEnumeratorTests(List<SelfTest> tests);
     static partial void AddWalkTests(List<SelfTest> tests);
     static partial void AddOutputTests(List<SelfTest> tests);
 
@@ -25,6 +26,7 @@ static partial class FsSelfTests
         AddCliTests(tests);
         AddModelTests(tests);
         AddReaderTests(tests);
+        AddEnumeratorTests(tests);
         AddWalkTests(tests);
         AddOutputTests(tests);
 

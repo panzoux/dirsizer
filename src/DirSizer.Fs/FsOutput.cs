@@ -43,7 +43,7 @@ static class FsOutput
 
     // Plain numbers (F, not N): no thousands separators, so the line can be split on "," and "=" whatever the size of the scan.
     static string BenchmarkLine(FsMetrics m) =>
-        $"benchmark: workers={m.Workers}, large_fetch={(m.LargeFetch ? "on" : "off")}, open_ms={m.Open.TotalMilliseconds:F1}, walk_ms={m.Walk.TotalMilliseconds:F1}, " +
+        $"benchmark: workers={m.Workers}, enumerator={m.Enumerator}, large_fetch={(m.LargeFetch ? "on" : "off")}, open_ms={m.Open.TotalMilliseconds:F1}, walk_ms={m.Walk.TotalMilliseconds:F1}, " +
         $"aggregation_ms={m.Aggregation.TotalMilliseconds:F1}, finalize_ms={m.Finalize.TotalMilliseconds:F1}, other_ms={m.Other.TotalMilliseconds:F1}, " +
         $"total_ms={m.Total.TotalMilliseconds:F1}, phase_sum_ms={m.PhaseSum.TotalMilliseconds:F1}, enum_ms_total={m.EnumTotal.TotalMilliseconds:F1}, " +
         $"idle_ms_total={m.IdleTotal.TotalMilliseconds:F1}, peak_queued_dirs={m.PeakQueuedDirs}, entries_per_sec={m.EntriesPerSec:F0}, " +
@@ -67,7 +67,7 @@ static class FsOutput
                 new JsonFsPerformance(
                     m.Open.TotalMilliseconds, m.Walk.TotalMilliseconds, m.Aggregation.TotalMilliseconds, m.Finalize.TotalMilliseconds,
                     m.Other.TotalMilliseconds, m.Total.TotalMilliseconds, m.PhaseSum.TotalMilliseconds,
-                    m.EnumTotal.TotalMilliseconds, m.IdleTotal.TotalMilliseconds, m.Workers, m.LargeFetch, m.PeakQueuedDirs,
+                    m.EnumTotal.TotalMilliseconds, m.IdleTotal.TotalMilliseconds, m.Workers, m.LargeFetch, m.Enumerator, m.PeakQueuedDirs,
                     m.ManagedAllocatedBytes, m.PeakWorkingSetBytes, m.EntriesPerSec, m.DirectoriesPerSec, m.LogicalMibPerSec)),
             "win32-find");
     }
@@ -83,7 +83,7 @@ static class FsOutput
 sealed record JsonFsOutput(string Volume, int Top, string SizeMode, JsonFsItem Root, JsonFsItem[] RootChildren, JsonFsItem[] Directories, JsonFsItem[] Files, JsonFsStatistics Statistics, string Reader);
 sealed record JsonFsItem(string Path, long Size);
 sealed record JsonFsStatistics(long DirectoriesScanned, long DirectoriesDenied, long DirectoriesFailed, long ReparseSkipped, long Directories, long Files, long Bytes, string[] ErrorSamples, JsonFsPerformance Performance);
-sealed record JsonFsPerformance(double OpenMs, double WalkMs, double AggregationMs, double FinalizeMs, double OtherMs, double TotalMs, double PhaseSumMs, double EnumMsTotal, double IdleMsTotal, int Workers, bool LargeFetch, int PeakQueuedDirs, long ManagedAllocatedBytes, long PeakWorkingSetBytes, double EntriesPerSec, double DirectoriesPerSec, double LogicalMibPerSec);
+sealed record JsonFsPerformance(double OpenMs, double WalkMs, double AggregationMs, double FinalizeMs, double OtherMs, double TotalMs, double PhaseSumMs, double EnumMsTotal, double IdleMsTotal, int Workers, bool LargeFetch, string Enumerator, int PeakQueuedDirs, long ManagedAllocatedBytes, long PeakWorkingSetBytes, double EntriesPerSec, double DirectoriesPerSec, double LogicalMibPerSec);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 [JsonSerializable(typeof(JsonFsOutput))]

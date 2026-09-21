@@ -32,7 +32,8 @@ try
         options.Top,
         options.Files,
         ShowProgress: !Console.IsErrorRedirected,
-        cancel.Token);
+        cancel.Token,
+        options.Enumerator.CreateFactory());
     var result = FsScanner.Scan(options.Root, settings);
     Volatile.Write(ref scanning, false);
     FsOutput.Write(result, options, Console.Out, Console.Error);

@@ -23,8 +23,8 @@ static partial class FsSelfTests
         tests.Add(new("walk leaves no worker running when the caller fails", WalkStopsWorkersWhenTheCallerFails));
     }
 
-    static FsResult Scan(string root, int workers, bool files = false, int top = 25, CancellationToken cancel = default, FindFirstFn? findFirst = null) =>
-        FsScanner.Scan(root, new ScanSettings(workers, top, files, false, cancel, findFirst is null ? null : new FindFirstFactory(true, findFirst)));
+    static FsResult Scan(string root, int workers, bool files = false, int top = 25, CancellationToken cancel = default, FindFirstFn? findFirst = null, IEnumeratorFactory? enumerators = null) =>
+        FsScanner.Scan(root, new ScanSettings(workers, top, files, false, cancel, findFirst is null ? enumerators : new FindFirstFactory(true, findFirst)));
 
     // Nested and empty directories, a zero-byte file, Unicode names, a path over 260 characters, and files of distinct sizes.
     static TempTree StandardTree()

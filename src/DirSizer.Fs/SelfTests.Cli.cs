@@ -6,6 +6,26 @@ static partial class FsSelfTests
         tests.Add(new("root paths are normalized to display and extended forms", RootPathForms));
         tests.Add(new("options: defaults and values", OptionsAccepted));
         tests.Add(new("options: bad input is rejected", OptionsRejected));
+        tests.Add(new("--enumerator: specs give their canonical form, bad ones are rejected", EnumeratorSpecs));
+    }
+
+    static void EnumeratorSpecs()
+    {
+        var good = new (string Text, string Canonical)[]
+        {
+            ("find", "find"), ("FIND", "find"), ("find:nolarge", "find:nolarge"),
+            ("handle", "handle:full:64"), ("handle:idextd", "handle:idextd:64"), ("handle:idextd:4", "handle:idextd:4"), ("handle:full:1024", "handle:full:1024"),
+            ("nt", "nt:dir:64"), ("nt:idextd", "nt:idextd:64"), ("nt:full:256", "nt:full:256"), ("NT:Dir:4", "nt:dir:4"),
+        };
+        foreach (var (text, canonical) in good) AssertEqual(canonical, EnumeratorSpec.Parse(text).Canonical, $"--enumerator {text}");
+        foreach (var text in new[] { "", "bogus", "find:full", "find:nolarge:4", "handle:dir", "handle:", "handle::64", "handle:full:3", "handle:full:1025", "handle:full:abc", "nt:foo", "nt:full:64:1" })
+            AssertThrows<ArgumentException>(() => EnumeratorSpec.Parse(text), $"--enumerator '{text}' is rejected");
+
+        AssertEqual("find", FsOptions.Parse(["x"]).Enumerator.Canonical, "the default enumerator is find");
+        AssertEqual("nt:dir:4", FsOptions.Parse(["x", "--enumerator=nt:dir:4"]).Enumerator.Canonical, "--enumerator=SPEC");
+        AssertEqual("handle:idextd:64", FsOptions.Parse(["x", "--enumerator", "handle:idextd"]).Enumerator.Canonical, "--enumerator SPEC");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["x", "--enumerator"]), "--enumerator without a value");
+        AssertThrows<ArgumentException>(() => FsOptions.Parse(["x", "--enumerator=bogus"]), "--enumerator with a bad value");
     }
 
     static void RootPathForms()
