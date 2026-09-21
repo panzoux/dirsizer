@@ -558,3 +558,79 @@ available and stay unverified) are written to `roadmap.md` and to this file.
 Cold-cache measurement, ReFS and network shares (not available), other operating systems, asynchronous
 or overlapped directory queries, several queries in flight on one handle, and any change to the
 aggregation or the output.
+
+### Results
+
+Measured on 2026-09-21 on the development machine (4 logical processors, Windows 10, `C:` NTFS,
+`T:` NTFS fixture volume, `D:` exFAT), with the NativeAOT `dirsizer.exe`, workers fixed at 8, warm
+cache, enumerators alternated with the order rotated each round. Every table below is the output of
+`scripts\Compare-Enumerators.ps1 -Time`.
+
+**Correctness.** `scripts\Compare-Enumerators.ps1 -Equal` compared the snapshot (every directory and
+its size, the counters) of 12 variants (`find`, `find:nolarge`, `handle` and `nt` in every class at 4 and
+64 KiB) on `T:\`, `C:\Program Files\dotnet` (1,969 directories, 13,939 files), `C:\Windows\System32\drivers`
+and the two synthetic trees: **all identical to `find`**. On `D:\` (exFAT) `find`, `find:nolarge`, `handle:full`,
+`nt:dir` and `nt:full` are identical; the `idextd` variants fail (below). Step 1 (the contract) changed
+nothing: snapshots of three trees are identical before and after.
+
+**Finalists** (5 rounds each; the finalists are the best variant of each family in the screening that works
+on every file system tested, so no `idextd`):
+
+| Workload | Enumerator | `walk_ms` min / median / max | `enum_ms_total` median | entries/s median | median vs `find` |
+| --- | --- | --- | --- | --- | --- |
+| W1 `C:\` | `find` | 19,749 / 20,665 / 20,924 | 149,613 | 62,708 | |
+| | `handle:full:64` (B) | 17,988 / 18,777 / 19,761 | 136,755 | 69,014 | **-9.1 %** |
+| | `nt:dir:64` (C) | 18,206 / 18,551 / 19,226 | 132,302 | 69,853 | **-10.2 %** |
+| W2 20,000 dirs x 3 files | `find` | 1,004 / 1,050 / 1,124 | 8,232 | 76,169 | |
+| | `handle:full:64` | 841 / 954 / 1,030 | 7,497 | 83,835 | -9.1 % |
+| | `nt:dir:64` | 892 / 905 / 1,005 | 7,155 | 88,355 | -13.8 % |
+| W3 10 dirs x 20,000 files | `find` | 32.9 / 40.9 / 59.3 | 107 | 4,888,965 | |
+| | `handle:full:64` | 25.6 / 26.8 / 35.9 | 84 | 7,476,031 | -34.6 % |
+| | `nt:dir:64` | 25.1 / 26.9 / 35.0 | 92 | 7,431,586 | -34.2 % |
+
+**Screening** (2 rounds on W1, 3 rounds on W2 and W3; medians, so on W1 the minimum): on W1, against `find`
+(19,595 ms): `find:nolarge` +5.0 %, `handle:full:64` -6.4 %, `handle:idextd:64` -7.1 %, `nt:dir:64` -7.2 %,
+`nt:full:64` -4.3 %, `nt:idextd:64` -7.1 %, `nt:dir:1024` +2.5 %. A buffer of 64 KiB was the best size on
+W1 and W2 (on W2 `handle:full` -20.2 % at 64 KiB, -6.1 % at 1024 KiB, -3.3 % at 4 KiB); 4 KiB was clearly
+worse (on W3 `nt:dir:4` was 9.1 % slower than `find`), and on W3 `handle:full:1024` (-24.3 %) beat
+`handle:full:64` (-14.1 %). `idextd` gave no measurable gain over the plain classes. `find` without `LARGE_FETCH` was
+10.1 % (W2) to 26.1 % (W3) slower, so the baseline is the tuned one.
+
+**Is `find` slower after the contract?** The pre-contract build and the contract build (both `find`), 7
+rounds on W2 and W3 and 3 on W1, alternating: W2 -3.5 %, W3 -20.0 %, W1 +4.7 % (26.4 s against 25.2 s; the
+volume was slower than in the finalists' run). There is no consistent difference, so the contract did not
+handicap `find`. (The reviewer noted that `find` now looks for the end of every name with `IndexOf`; it is
+nanoseconds against a syscall.)
+
+**Verdict by the adoption rule.**
+
+- **B (`handle:full:64`)**: correct and identical everywhere it works; W1 median **-9.1 %, below the 10 %
+  bar**, so it is **not a candidate for the default**. It is never slower than `find` on W1, W2 or W3, and
+  its gain on many-small-directories (W2 -9.1 %) shows that the extra open per directory costs less than
+  it saves. The W1 ranges overlap (the slowest B run, 19,761 ms, against the fastest `find` run, 19,749 ms).
+- **C (`nt:dir:64`)**: identical where it works; W1 median -10.2 %, which meets the number, but C is native
+  and experimental and **is never made the default by this rule** (see "Standing"). On this machine B and C
+  differ by about 1 % on W1, which is within the run-to-run noise.
+- **Decision: `find` stays the default.** Nothing was changed for B: it misses the bar, and a default change
+  needs the fallback to `find` that is not implemented. If the 10 % bar is judged too strict, the case for
+  B is the consistent -6 % to -9 % on W1 and -9 % and -35 % on W2 and W3; that decision belongs to the
+  owner, and it would be a separate step with the fallback. The worker sweep is not done, because there is
+  no candidate to sweep.
+- The absolute time of `C:` drifts a lot between runs (19.6 s to 26 s here), so only numbers from the same
+  alternating run may be compared with each other.
+
+**Capability matrix** (what worked, measured here):
+
+| Variant | NTFS (`C:`, `T:`) | exFAT (`D:`) | ReFS, network share |
+| --- | --- | --- | --- |
+| `find`, `find:nolarge` | works, identical | works, identical | not available, unverified |
+| `handle:full`, `nt:dir`, `nt:full` (4 to 1024 KiB) | works, identical to `find` | works, identical to `find` | not available, unverified |
+| `handle:idextd`, `nt:idextd` | works, identical to `find` | **fails with error 87** (`ERROR_INVALID_PARAMETER`) | not available, unverified |
+
+**Known differences and limits** (from the review of the code): a directory whose deletion is pending is
+`Denied` for B and C (the open reports access denied) but `Failed` for `find`, so on a live volume the two
+counters can move between runs; the JSON `reader` field still says `win32-find` whatever the enumerator is
+(`performance.enumerator` is the truthful one); B does not know how many bytes it received, so it relies on
+the chain ending with `NextEntryOffset` 0 (the parser is bounds-checked, so a bad chain is an error, not an
+out-of-range read); a share root (`\\server\share`) is opened by B and C without a trailing backslash and was
+not tried.
