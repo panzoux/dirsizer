@@ -3330,6 +3330,12 @@ Implemented as `src\DirSizer.Fs`; see P5 in [roadmap.md](roadmap.md) for what wa
 ## Deliverables of this work
 ```
 
+- [ ] **Step 8b: Two statements that the new tool made stale**
+
+`README.md`, in the Build section. Old: `` `scripts\release.ps1` publishes all three (see "Releases"). `` New: `` `scripts\release.ps1` publishes all four (see "Releases"). ``
+
+`docs\roadmap.md`, in the promotion-criteria intro. Old: `(and no combined `dirsizer.exe`)` New: `(and no combined tool that tries bulk and falls back to fsctl)`. Leave the dated P4 item "Release script publishes the three tools ..." as it is: it records what was true at v0.3.0.
+
 - [ ] **Step 9: Commit**
 
 ```powershell

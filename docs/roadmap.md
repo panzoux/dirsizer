@@ -96,7 +96,7 @@ Specified in [design_fs.md](design_fs.md). Independent of `DirSizer.Core`; none 
 
 ## Promotion criteria: bulk from experimental to default candidate
 
-Current product state: `dirsizer-fsctl` is the conservative reference, `dirsizer-bulk` is a separate, experimental tool, and there is no automatic fallback between them (and no combined `dirsizer.exe`). Bulk should become a default candidate only after all of these:
+Current product state: `dirsizer-fsctl` is the conservative reference, `dirsizer-bulk` is a separate, experimental tool, and there is no automatic fallback between them (and no combined tool that tries bulk and falls back to fsctl). Bulk should become a default candidate only after all of these:
 
 - [ ] Correctness on another NTFS volume (different size, cluster size, or MFT record size) with the same reader-vs-reader comparison.
 - [ ] Correctness with a strongly fragmented MFT (several extents, so the multi-extent and multi-call `ERROR_MORE_DATA` paths run on real data, not only on a small extent map).

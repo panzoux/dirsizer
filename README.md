@@ -48,7 +48,7 @@ Publish a small NativeAOT executable (this needs the Visual Studio C++ build too
 dotnet publish src\DirSizer.Bulk\DirSizer.Bulk.csproj -c Release -r win-x64
 ```
 
-The executable is under `artifacts\publish\DirSizer.Bulk\release_win-x64\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all three (see "Releases").
+The executable is under `artifacts\publish\DirSizer.Bulk\release_win-x64\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all four (see "Releases").
 
 For a fast local compile, build the solution (`DirSizer.sln`, every tool and the developer tool) or one project. Each project builds into its own folder, `artifacts\bin\<project>\release_win-x64\`:
 
