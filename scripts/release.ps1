@@ -49,6 +49,14 @@ function Invoke-Native([string]$What, [scriptblock]$Command) {
     if ($LASTEXITCODE -ne 0) { throw "$What failed (exit code $LASTEXITCODE)" }
 }
 
+# The NativeAOT link step runs vswhere.exe to find the C++ build tools. It lives in the Visual Studio Installer folder, which
+# is not always on PATH (a plain terminal, an agent shell); without it the link fails with a misleading "not recognized" error.
+if (-not (Get-Command vswhere.exe -ErrorAction SilentlyContinue)) {
+    $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
+    if (Test-Path (Join-Path $installer 'vswhere.exe')) { $env:PATH = "$env:PATH;$installer" }
+    else { Write-Warning 'vswhere.exe was not found; the NativeAOT link step will fail unless the Visual Studio C++ build tools are installed.' }
+}
+
 foreach ($tool in $Tools) { if (-not (Test-Path (Join-Path $Repo $tool.Project))) { throw "project not found: $($tool.Project)" } }
 if (-not (Test-Path $VersionFile)) { throw "version file not found: $VersionFile" }
 [xml]$projectXml = Get-Content $VersionFile -Raw
