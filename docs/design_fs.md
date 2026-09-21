@@ -475,8 +475,12 @@ in the capability matrix. There is no automatic fallback while comparing.
 | --- | --- |
 | `find` | `FindFirstFileExW` with `LARGE_FETCH` (the default) |
 | `find:nolarge` | the same without `LARGE_FETCH` (a comparison point) |
-| `handle`, `handle:idextd`, `handle:full`, `handle:full:256` | B; default class `idextd`, default buffer 64 KiB |
-| `nt`, `nt:dir`, `nt:full`, `nt:idextd:256` | C; default class `idextd`, default buffer 64 KiB |
+| `handle`, `handle:idextd`, `handle:full`, `handle:full:256` | B; classes `full` (default) and `idextd`; default buffer 64 KiB |
+| `nt`, `nt:dir`, `nt:full`, `nt:idextd:256` | C; classes `dir` (default), `full` and `idextd`; default buffer 64 KiB |
+
+The default class is the lightest one that works on every file system that was available (NTFS and
+exFAT): **`idextd` is not supported on exFAT** and fails there with `ERROR_INVALID_PARAMETER`, for B
+and for C alike (measured on `D:`, see the capability matrix in the results).
 
 An unknown name or class, or a buffer below 4 KiB or above 1024 KiB, is an option error (exit 1).
 The canonical form is what is reported (`performance.enumerator`, the `--benchmark` line).
@@ -492,25 +496,31 @@ The canonical form is what is reported (`performance.enumerator`, the `--benchma
   buffer refills at the small buffer (the boundary where a parser goes wrong).
 - **The whole walk**, every enumerator with 1, 3 and 8 workers, against the same independent oracle
   as the walk tests.
-- **Real volumes**, by script: the same comparison of the JSON output of A, B and C on `T:\` (NTFS),
-  `D:\` (exFAT) and a static tree on `C:\`. Everything must be identical, not only the root size: every
-  directory and its size, and the counters.
+- **Real volumes**, by script (`scripts\Compare-Enumerators.ps1 -Equal`): the same comparison of the
+  canonical snapshots (`scripts\Get-FsSnapshot.ps1`) of A, B and C on `T:\` (NTFS), `D:\` (exFAT), static
+  trees on `C:\` and the two synthetic trees. Everything must be identical, not only the root size: every
+  directory and its size, and the counters. A variant that does not work on a file system is not
+  hidden: it is reported as failed with the error it returned, and goes into the capability matrix.
 
 ### Measurement
 
 - The enumerator is the only variable. The workers are **fixed at 8** for the comparison; a worker
   sweep (1, 2, 4, 8) is done afterwards, for the winner only.
 - Workloads: **W1** the real `C:\` (about 228,000 directories, 786,000 files); **W2** a synthetic tree of
-  many small directories (for example 60,000 directories with 3 files each); **W3** a synthetic tree of
-  few large directories (for example 20 directories with 50,000 empty files each). They separate the cost
-  per directory (one more open for B and C) from the cost per entry. The synthetic trees are created by a
-  script under `%TEMP%`; `New-EnumFixture.ps1` is deterministic in names and sizes.
-- Method: warm file cache, the enumerators alternated in each round, 5 rounds, the median. **Primary
-  metric: `walk_ms` (wall clock).** Diagnostics reported next to it: `enum_ms_total` (summed worker time,
-  not the elapsed time), `entries_per_sec`, `idle_ms_total`, managed allocation, peak working set.
-  Cold cache is not measured in this work.
-- Order: A on all workloads; B variants (class by buffer size 4, 64, 1024 KiB) on all workloads, best B;
-  C variants the same, best C; then A against best B against best C; then the sweep for the winner.
+  many small directories (20,000 directories with 3 files each, 60,000 files); **W3** a synthetic tree of
+  few large directories (10 directories with 20,000 files each, 200,000 files). They separate the cost
+  per directory (one more open for B and C) from the cost per entry. The synthetic trees are created by
+  `scripts\New-EnumFixture.ps1` under `%TEMP%` (deterministic names and sizes) and removed afterwards.
+  W2 and W3 run for tens to hundreds of milliseconds, so their numbers are noisy and only show a
+  direction; W1 decides.
+- Method: warm file cache, the enumerators alternated in each round (the order rotated), the median.
+  **Primary metric: `walk_ms` (wall clock).** Diagnostics reported next to it: `enum_ms_total` (summed
+  worker time, not the elapsed time), `entries_per_sec`, `idle_ms_total`, managed allocation, peak
+  working set. Cold cache is not measured in this work. `C:` is a live volume, so the byte totals of two
+  runs differ slightly; equality is checked on quiescent trees only.
+- Order: **screening** of every variant (A with and without `LARGE_FETCH`; B and C in each class, at 4,
+  64 and 1024 KiB) with 2 rounds; the best variant of A, B and C **and the reference `find`** then get 5
+  rounds on W1, W2 and W3 (the finalists); then the worker sweep (1, 2, 4, 8) for the winner only.
 - Recorded per run: the resolved enumerator, `large_fetch` for `find`, the class and buffer for B and C.
 
 ### Adoption rule
