@@ -115,7 +115,10 @@ sealed class HandleInfoEnumerator(EntryClass entryClass, int bufferKiB) : Buffer
     {
         // The call does not say how many bytes it wrote; the chain of entries ends with NextEntryOffset 0.
         bytes = Buffer.Length;
-        return GetFileInformationByHandleEx(handle, first ? _restartClass : _nextClass, ref Buffer[0], (uint)Buffer.Length) ? 0 : Marshal.GetLastPInvokeError();
+        if (GetFileInformationByHandleEx(handle, first ? _restartClass : _nextClass, ref Buffer[0], (uint)Buffer.Length)) return 0;
+        var error = Marshal.GetLastPInvokeError();
+        // STATUS_NO_SUCH_FILE on the first query (no entry at all, as in an empty FAT/exFAT directory) arrives as this error.
+        return first && error == Win32Find.ErrorFileNotFound ? Win32Find.ErrorNoMoreFiles : error;
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -131,6 +134,7 @@ sealed class NtQueryEnumerator(EntryClass entryClass, int bufferKiB) : BufferedE
     // makes the file system return one entry per query.
     const uint RestartScan = 0x1;
     const int StatusNoMoreFiles = unchecked((int)0x80000006);
+    const int StatusNoSuchFile = unchecked((int)0xC000000F);
 
     readonly int _class = entryClass switch { EntryClass.Dir => 1, EntryClass.Full => 2, _ => 60 };
     IoStatusBlock _status;
@@ -139,7 +143,8 @@ sealed class NtQueryEnumerator(EntryClass entryClass, int bufferKiB) : BufferedE
     {
         bytes = 0;
         var status = NtQueryDirectoryFileEx(handle, 0, 0, 0, ref _status, ref Buffer[0], (uint)Buffer.Length, _class, first ? RestartScan : 0, 0);
-        if (status == StatusNoMoreFiles) return Win32Find.ErrorNoMoreFiles;
+        // STATUS_NO_MORE_FILES ends a directory; STATUS_NO_SUCH_FILE on the first query means that there is no entry at all.
+        if (status == StatusNoMoreFiles || (first && status == StatusNoSuchFile)) return Win32Find.ErrorNoMoreFiles;
         if (status < 0)
         {
             var error = (int)RtlNtStatusToDosError(status);

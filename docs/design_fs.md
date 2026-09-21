@@ -420,7 +420,11 @@ change, and every existing self-test still passes.
 - **Errors at the open.** `ERROR_ACCESS_DENIED` is `Denied`. Any other error, **including
   `ERROR_FILE_NOT_FOUND` and `ERROR_PATH_NOT_FOUND`, is `Failed`**: for `find`, `ERROR_FILE_NOT_FOUND`
   means "no entries" (an empty FAT/exFAT root), but here it would mean that the directory does not
-  exist. An empty directory is an open that succeeds followed by an immediate end of enumeration.
+  exist. An empty directory is an open that succeeds followed by an immediate end of enumeration:
+  `STATUS_NO_MORE_FILES` or, when the very first query finds no entry at all, `STATUS_NO_SUCH_FILE`
+  (B sees it as `ERROR_FILE_NOT_FOUND`); on the first query both mean `Complete`. An empty directory
+  on the exFAT volume `D:` was scanned and gave `Complete` for all three enumerators, so the second
+  form was not observed there; it is handled because the native API documents it.
 - **Buffer.** One per-worker `byte[]` (default 64 KiB, configurable, at least 4 KiB). Each query asks
   for as many entries as fit in the buffer. Entries are read by following `NextEntryOffset` (0 marks
   the last one), and the name is `FileNameLength` bytes of UTF-16 at the end of the entry.
@@ -459,9 +463,9 @@ in the capability matrix. There is no automatic fallback while comparing.
 - The end of a directory is the status `STATUS_NO_MORE_FILES` (0x80000006). **A later query that
   succeeds but returns no entry (`IoStatusBlock.Information` is 0) means that the buffer is too small,
   not that the directory is finished**; the directory is `Failed` with `ERROR_INSUFFICIENT_BUFFER`
-  (the buffer floor of 4 KiB makes this impossible for ordinary names). `STATUS_BUFFER_OVERFLOW` and
-  `STATUS_BUFFER_TOO_SMALL` are `Failed` the same way. Other NTSTATUS values are converted to a Win32
-  error with `RtlNtStatusToDosError` for the error code and message.
+  (the buffer floor of 4 KiB makes this impossible for ordinary names). Any other failing NTSTATUS
+  (`STATUS_BUFFER_OVERFLOW` and `STATUS_BUFFER_TOO_SMALL` included) makes the directory `Failed`, with
+  the Win32 error that `RtlNtStatusToDosError` gives for the error code and message.
 - Because C is a native API, it is only ever selected explicitly (`--enumerator=nt...`); a failure of
   the `ntdll.dll` entry point itself (for example on a Windows before 1709) is reported as an error,
   not hidden.
