@@ -7,6 +7,8 @@ static class FsOutput
     {
         if (options.Json)
         {
+            // The default encoder writes ASCII only (non-ASCII characters become \uXXXX escapes), so the JSON is exact even when stdout
+            // is redirected through a console code page that cannot represent every character in a path.
             output.WriteLine(JsonSerializer.Serialize(ToJson(result, options.Top), FsJsonContext.Default.JsonFsOutput));
         }
         else
@@ -33,16 +35,19 @@ static class FsOutput
         {
             error.WriteLine($"warning: {result.Counters.Unreadable:N0} directories could not be read (denied {result.Counters.DirectoriesDenied:N0}, failed {result.Counters.DirectoriesFailed:N0}); the sizes are a lower bound.");
             foreach (var sample in result.ErrorSamples) error.WriteLine($"  failed: {sample}");
+            var notListed = result.Counters.DirectoriesFailed - result.ErrorSamples.Length;
+            if (notListed > 0) error.WriteLine($"  ... and {notListed:N0} more failed directories that are not listed");
         }
         if (options.Benchmark) error.WriteLine(BenchmarkLine(result.Metrics));
     }
 
+    // Plain numbers (F, not N): no thousands separators, so the line can be split on "," and "=" whatever the size of the scan.
     static string BenchmarkLine(FsMetrics m) =>
-        $"benchmark: workers={m.Workers}, large_fetch={(m.LargeFetch ? "on" : "off")}, open_ms={m.Open.TotalMilliseconds:N1}, walk_ms={m.Walk.TotalMilliseconds:N1}, " +
-        $"aggregation_ms={m.Aggregation.TotalMilliseconds:N1}, finalize_ms={m.Finalize.TotalMilliseconds:N1}, other_ms={m.Other.TotalMilliseconds:N1}, " +
-        $"total_ms={m.Total.TotalMilliseconds:N1}, phase_sum_ms={m.PhaseSum.TotalMilliseconds:N1}, enum_ms_total={m.EnumTotal.TotalMilliseconds:N1}, " +
-        $"idle_ms_total={m.IdleTotal.TotalMilliseconds:N1}, peak_queued_dirs={m.PeakQueuedDirs}, entries_per_sec={m.EntriesPerSec:N0}, " +
-        $"directories_per_sec={m.DirectoriesPerSec:N0}, logical_mib_per_sec={m.LogicalMibPerSec:N1}, managed_allocated={m.ManagedAllocatedBytes}, peak_working_set={m.PeakWorkingSetBytes}";
+        $"benchmark: workers={m.Workers}, large_fetch={(m.LargeFetch ? "on" : "off")}, open_ms={m.Open.TotalMilliseconds:F1}, walk_ms={m.Walk.TotalMilliseconds:F1}, " +
+        $"aggregation_ms={m.Aggregation.TotalMilliseconds:F1}, finalize_ms={m.Finalize.TotalMilliseconds:F1}, other_ms={m.Other.TotalMilliseconds:F1}, " +
+        $"total_ms={m.Total.TotalMilliseconds:F1}, phase_sum_ms={m.PhaseSum.TotalMilliseconds:F1}, enum_ms_total={m.EnumTotal.TotalMilliseconds:F1}, " +
+        $"idle_ms_total={m.IdleTotal.TotalMilliseconds:F1}, peak_queued_dirs={m.PeakQueuedDirs}, entries_per_sec={m.EntriesPerSec:F0}, " +
+        $"directories_per_sec={m.DirectoriesPerSec:F0}, logical_mib_per_sec={m.LogicalMibPerSec:F1}, managed_allocated={m.ManagedAllocatedBytes}, peak_working_set={m.PeakWorkingSetBytes}";
 
     public static JsonFsOutput ToJson(FsResult result, int top)
     {

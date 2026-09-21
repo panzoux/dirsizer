@@ -40,6 +40,38 @@ static partial class FsSelfTests
         var quietError = new StringWriter();
         FsOutput.Write(SyntheticResult(0, 0, []), FsOptions.Parse([@"C:\r"]), new StringWriter(), quietError);
         AssertEqual("", quietError.ToString(), "nothing on stderr when every directory was read");
+        Assert(!error.ToString().Contains("more failed"), "no 'more failed' line when every failed directory has a sample");
+
+        // More failed directories than samples: the reader is told that the list is cut.
+        var cutError = new StringWriter();
+        FsOutput.Write(SyntheticResult(denied: 0, failed: 25, [sample]), FsOptions.Parse([@"C:\r"]), new StringWriter(), cutError);
+        Assert(cutError.ToString().Contains("... and 24 more failed directories that are not listed"), "the sample list says that it is cut");
+
+        // JSON mode with --benchmark: stdout stays exactly one JSON document; the warning and the benchmark line go to stderr.
+        var jsonOut = new StringWriter();
+        var jsonErr = new StringWriter();
+        FsOutput.Write(SyntheticResult(denied: 2, failed: 1, [sample]), FsOptions.Parse([@"C:\r", "--json", "--benchmark"]), jsonOut, jsonErr);
+        using (JsonDocument.Parse(jsonOut.ToString())) { }   // throws unless stdout holds one JSON document and nothing else
+        Assert(jsonErr.ToString().Contains("warning:") && jsonErr.ToString().Contains("benchmark: workers=4"), "the warning and the benchmark line are on stderr");
+        Assert(!jsonOut.ToString().Contains("warning:") && !jsonOut.ToString().Contains("benchmark:"), "and not in the JSON");
+
+        // The benchmark line can be split on "," and "=" whatever the size of the numbers (no thousands separators).
+        var big = SyntheticResult(0, 0, []);
+        big = big with { Metrics = big.Metrics with { Walk = TimeSpan.FromMilliseconds(19973.4), Total = TimeSpan.FromMilliseconds(20000), Entries = 2_500_000 } };
+        var bigError = new StringWriter();
+        FsOutput.Write(big, FsOptions.Parse([@"C:\r", "--benchmark"]), new StringWriter(), bigError);
+        var line = bigError.ToString().Trim();
+        Assert(line.Contains("walk_ms=19973.4"), "a walk of 19973.4 ms is written without a thousands separator");
+        AssertEqual(line.Split(',').Length, line.Split('=').Length - 1, "every field between commas has exactly one '=': no comma inside a value");
+
+        // Non-ASCII and volume paths survive a round trip through JSON, and the JSON itself is ASCII only.
+        var volumePath = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\\u65e5\u672c\u8a9e & 'x'";
+        var unicode = SyntheticResult(0, 0, []) with { Directories = [new ResultItem(volumePath, 1)] };
+        var unicodeOut = new StringWriter();
+        FsOutput.Write(unicode, FsOptions.Parse([@"C:\r", "--json"]), unicodeOut, new StringWriter());
+        using var unicodeDocument = JsonDocument.Parse(unicodeOut.ToString());
+        AssertEqual(volumePath, unicodeDocument.RootElement.GetProperty("directories")[0].GetProperty("path").GetString(), "the path comes back unchanged");
+        foreach (var character in unicodeOut.ToString()) Assert(character < 128, "the JSON text is ASCII only (non-ASCII characters are escaped)");
     }
 
     static void TextOutput()
@@ -58,6 +90,11 @@ static partial class FsSelfTests
         Assert(output.Contains("7,011"), "sizes are grouped");
         Assert(error.ToString().Contains("benchmark: workers=2"), "--benchmark prints the timings to stderr");
         Assert(!error.ToString().Contains("warning"), "no warning when every directory was read");
+
+        var plain = new StringWriter();
+        FsOutput.Write(Scan(tree.Root, 2, top: 3), FsOptions.Parse([tree.Root, "--top=3"]), plain, new StringWriter());
+        Assert(plain.ToString().Contains("Directories (largest 3)"), "the directory table is always shown");
+        Assert(!plain.ToString().Contains("Files (largest"), "the file table only with --files");
     }
 
     static void JsonOutput()
@@ -83,8 +120,23 @@ static partial class FsSelfTests
         foreach (var name in new[] { "directories_scanned", "directories_denied", "directories_failed", "reparse_skipped", "files", "error_samples" })
             Assert(statistics.TryGetProperty(name, out _), $"statistics.{name} is present");
         var performance = statistics.GetProperty("performance");
-        foreach (var name in new[] { "open_ms", "walk_ms", "aggregation_ms", "finalize_ms", "other_ms", "total_ms", "phase_sum_ms", "enum_ms_total", "idle_ms_total", "workers", "large_fetch", "peak_queued_dirs", "entries_per_sec", "directories_per_sec", "logical_mib_per_sec" })
+        foreach (var name in new[] { "open_ms", "walk_ms", "aggregation_ms", "finalize_ms", "other_ms", "total_ms", "phase_sum_ms", "enum_ms_total", "idle_ms_total", "workers", "large_fetch", "peak_queued_dirs", "managed_allocated_bytes", "peak_working_set_bytes", "entries_per_sec", "directories_per_sec", "logical_mib_per_sec" })
             Assert(performance.TryGetProperty(name, out _), $"performance.{name} is present");
         AssertEqual(2, performance.GetProperty("workers").GetInt32(), "performance.workers");
+        Assert(performance.GetProperty("large_fetch").ValueKind is JsonValueKind.True or JsonValueKind.False, "performance.large_fetch is a JSON boolean");
+        Assert(performance.GetProperty("total_ms").ValueKind == JsonValueKind.Number, "timings are JSON numbers");
+
+        // root_children: contents and order (wide 251225, long 7011, deep 4007 for the standard tree).
+        var children = root.GetProperty("root_children");
+        AssertEqual("251225,7011,4007", string.Join(',', new[] { children[0].GetProperty("size").GetInt64(), children[1].GetProperty("size").GetInt64(), children[2].GetProperty("size").GetInt64() }), "root_children sizes, largest first");
+        Assert(children[0].GetProperty("path").GetString()!.EndsWith("\\wide"), "the largest root child is the wide directory");
+
+        // --files with --json: a non-empty, descending files array.
+        var withFiles = new StringWriter();
+        FsOutput.Write(Scan(tree.Root, 2, files: true, top: 3), FsOptions.Parse([tree.Root, "--json", "--files", "--top=3"]), withFiles, new StringWriter());
+        using var filesDocument = JsonDocument.Parse(withFiles.ToString());
+        var fileItems = filesDocument.RootElement.GetProperty("files");
+        AssertEqual(3, fileItems.GetArrayLength(), "--files: three files");
+        AssertEqual("7011,5049,5048", string.Join(',', new[] { fileItems[0].GetProperty("size").GetInt64(), fileItems[1].GetProperty("size").GetInt64(), fileItems[2].GetProperty("size").GetInt64() }), "--files: largest first");
     }
 }
