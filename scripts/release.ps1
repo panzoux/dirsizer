@@ -107,6 +107,7 @@ if (Test-Path $Zip) { Remove-Item $Zip -Force }
 New-Item -ItemType Directory -Force $Stage | Out-Null
 foreach ($tool in $Tools) { Copy-Item $tool.Published (Join-Path $Stage $tool.Exe) }
 Copy-Item (Join-Path $Repo 'README.md') (Join-Path $Stage 'README.md')
+Copy-Item (Join-Path $Repo 'README-jp.md') (Join-Path $Stage 'README-jp.md')
 Copy-Item (Join-Path $Repo 'LICENSE') (Join-Path $Stage 'LICENSE')
 
 Compress-Archive -Path (Join-Path $Stage '*') -DestinationPath $Zip -CompressionLevel Optimal
