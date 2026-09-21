@@ -751,6 +751,13 @@ static partial class FsSelfTests
         AssertEqual(6L, nodes[1].Total, "a = own 2 + b 4");
         AssertEqual(8L, nodes[3].Total, "c");
         AssertEqual(15L, nodes[0].Total, "root = own 1 + a 6 + c 8");
+
+        // The commonest real input: a table with only the root (an empty directory), through Build and then Aggregate.
+        var alone = DirTable.Build(new DirNode(0, -1, @"C:\empty"), []);
+        AssertEqual(1, alone.Length, "Build with no other nodes");
+        alone[0].OwnFileSize = 7;
+        DirTable.Aggregate(alone);
+        AssertEqual(7L, alone[0].Total, "a table with only the root");
     }
 
     static void AggregationRejectsBadParent()
@@ -761,6 +768,13 @@ static partial class FsSelfTests
         var selfParent = SyntheticNodes();
         selfParent[1] = new DirNode(1, 1, "a");
         AssertThrows<InvalidOperationException>(() => DirTable.Aggregate(selfParent), "node that is its own parent");
+        AssertThrows<InvalidOperationException>(() => DirTable.Aggregate([]), "an empty table");
+        var rootWithParent = SyntheticNodes();
+        rootWithParent[0] = new DirNode(0, 3, @"C:\r");
+        AssertThrows<InvalidOperationException>(() => DirTable.Aggregate(rootWithParent), "a root that has a parent");
+        var wrongId = SyntheticNodes();
+        wrongId[2] = new DirNode(9, 1, "b");
+        AssertThrows<InvalidOperationException>(() => DirTable.Aggregate(wrongId), "a node whose id is not its index");
     }
 
     static void TableRejectsDuplicateId()
@@ -771,6 +785,8 @@ static partial class FsSelfTests
         AssertThrows<InvalidOperationException>(() => DirTable.Build(root, [first, second]), "duplicate id");
         var outOfRange = new List<DirNode> { new(5, 0, "a") };
         AssertThrows<InvalidOperationException>(() => DirTable.Build(root, [outOfRange]), "id beyond the table");
+        var secondRoot = new List<DirNode> { new(0, 0, "x") };
+        AssertThrows<InvalidOperationException>(() => DirTable.Build(root, [secondRoot]), "a second node with id 0");
         var ok = DirTable.Build(root, [new List<DirNode> { new(2, 0, "b") }, new List<DirNode> { new(1, 0, "a") }]);
         AssertEqual("a", ok[1].Name, "nodes are placed by id, whatever list they came from");
         AssertEqual("b", ok[2].Name, "nodes are placed by id, whatever list they came from");
@@ -790,6 +806,41 @@ static partial class FsSelfTests
         top.AddAll(other);
         AssertEqual("n10,n9,n8", string.Join(',', top.ToDescendingArray()), "merged, largest first");
         AssertEqual(0, top.Count, "ToDescendingArray empties the heap");
+
+        var roomy = new BoundedTop<string>(5);
+        roomy.Add("zero", 0);
+        Assert(roomy.WouldAccept(0), "a heap that is not full accepts any size");
+        var none = new BoundedTop<string>(0);
+        none.Add("x", 100);
+        AssertEqual(0, none.Count, "a limit of 0 keeps nothing");
+        var same = new BoundedTop<string>(2);
+        same.Add("a", 1);
+        same.Add("b", 2);
+        same.AddAll(same);
+        AssertEqual("b,a", string.Join(',', same.ToDescendingArray()), "merging a heap into itself changes nothing");
+
+        // Against a sorted-list oracle, with a fixed seed and many ties (sizes 0-5).
+        var random = new Random(12345);
+        for (var round = 0; round < 500; round++)
+        {
+            var limit = random.Next(1, 8);
+            var count = random.Next(0, 30);
+            var heap = new BoundedTop<FileHit>(limit);
+            var all = new List<long>();
+            for (var index = 0; index < count; index++)
+            {
+                var size = (long)random.Next(0, 6);
+                all.Add(size);
+                heap.Add(new FileHit(0, "n" + index, size), size);
+            }
+            all.Sort();
+            all.Reverse();
+            var expected = new List<long>();
+            for (var index = 0; index < Math.Min(limit, all.Count); index++) expected.Add(all[index]);
+            var actual = new List<long>();
+            foreach (var hit in heap.ToDescendingArray()) actual.Add(hit.Size);
+            AssertEqual(string.Join(',', expected), string.Join(',', actual), $"round {round} (limit {limit}, {count} entries): kept sizes, largest first");
+        }
     }
 
     static void PathsFromNodes()
@@ -804,6 +855,9 @@ static partial class FsSelfTests
         AssertEqual(@"C:\x\f.bin", DirTable.Combine(DirTable.PathOf(driveRoot, 1), "f.bin"), "file path");
         var share = new DirNode[] { new(0, -1, @"\\server\share"), new(1, 0, "x") };
         AssertEqual(@"\\server\share\x", DirTable.PathOf(share, 1), "child of a share root");
+        var corrupt = SyntheticNodes();
+        corrupt[1] = new DirNode(1, 2, "a");   // parent id 2 is larger than 1: a loop between 1 and 2
+        AssertThrows<InvalidOperationException>(() => DirTable.RelativePath(corrupt, 2), "a corrupt table gives an error, not an endless loop");
     }
 }
 ```
@@ -835,7 +889,10 @@ sealed class DirNode(int id, int parentId, string name)
 
 readonly record struct FileHit(int DirId, string Name, long Size);
 
-// Keeps the `limit` entries with the largest size. Order among equal sizes is unspecified.
+// Keeps the `limit` entries with the largest size. Order among equal sizes is unspecified. Not thread-safe: every worker has its own
+// instance and they are merged after the join. Which sizes are eligible at all (for example only files larger than 0) is the
+// caller's decision; the item and its size are not tied together, because the caller creates the item (a name string) only after
+// WouldAccept has said that it will be kept.
 sealed class BoundedTop<T>(int limit)
 {
     readonly PriorityQueue<T, long> _queue = new();
@@ -858,6 +915,7 @@ sealed class BoundedTop<T>(int limit)
 
     public void AddAll(BoundedTop<T> other)
     {
+        if (ReferenceEquals(other, this)) return;   // Add would change the queue while it is being enumerated
         foreach (var (item, size) in other._queue.UnorderedItems) Add(item, size);
     }
 
@@ -920,7 +978,14 @@ static class DirTable
     public static string RelativePath(DirNode[] nodes, int id)
     {
         var names = new Stack<string>();
-        for (var current = id; current != 0; current = nodes[current].ParentId) names.Push(nodes[current].Name);
+        for (var current = id; current != 0; current = nodes[current].ParentId)
+        {
+            // Aggregate has already validated every table that reaches the output; this turns a corrupt table into an error
+            // instead of an endless loop.
+            if (nodes[current].ParentId < 0 || nodes[current].ParentId >= current)
+                throw new InvalidOperationException($"directory table invariant violated at id {current}: parent id {nodes[current].ParentId}");
+            names.Push(nodes[current].Name);
+        }
         return string.Join('\\', names);
     }
 }

@@ -125,7 +125,7 @@ considered decided. A wrong default is easy to override (`--workers`); it is not
 DirNode
     int    Id           dense, 0 = the root
     int    ParentId     (root: -1)
-    string Name         (root: the root path as given)
+    string Name         (root: the root path as displayed, after normalisation)
     long   OwnFileSize  files directly in this directory
     long   Total        own + everything below; filled by aggregation
 ```
