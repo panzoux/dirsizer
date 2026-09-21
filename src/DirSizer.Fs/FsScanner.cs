@@ -33,7 +33,7 @@ sealed record FsResult(
     string[] ErrorSamples,
     DirNode[] Nodes);
 
-sealed record ScanSettings(int Workers, int Top, bool CollectFiles, bool ShowProgress, CancellationToken Cancel = default, FindFirstFn? FindFirst = null);
+sealed record ScanSettings(int Workers, int Top, bool CollectFiles, bool ShowProgress, CancellationToken Cancel = default, IEnumeratorFactory? Enumerators = null);
 
 readonly record struct RootChild(DirNode? Directory, FileHit File);
 
@@ -58,7 +58,7 @@ static class FsScanner
         WalkResult walk;
         try
         {
-            walk = new Walker(settings.FindFirst).Run(root, rootPath.Extended, settings.Workers, settings.Top, settings.CollectFiles, settings.Cancel, progress);
+            walk = new Walker(settings.Enumerators).Run(root, rootPath.Extended, settings.Workers, settings.Top, settings.CollectFiles, settings.Cancel, progress);
         }
         finally
         {

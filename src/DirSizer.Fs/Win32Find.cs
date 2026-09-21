@@ -31,14 +31,9 @@ struct Win32FindData
 
 readonly record struct FindFirstResult(nint Handle, int Error);
 
-// The one call that the self-test replaces to inject failures (see DirectoryReader). Not an enumerator abstraction.
+// The one call that the self-test replaces to inject failures (see FindFirstEnumerator). Not the enumerator abstraction: that is
+// IDirectoryEnumerator.
 delegate FindFirstResult FindFirstFn(string pattern, ref Win32FindData data, bool largeFetch);
-
-interface IEntrySink
-{
-    // Called for every entry except "." and "..". The reference is only valid during the call.
-    void OnEntry(in Win32FindData entry);
-}
 
 static class Win32Find
 {
@@ -72,19 +67,6 @@ static class Win32Find
     }
 
     public static void Close(nint handle) => FindClose(handle);
-
-    public static bool IsDotEntry(in Win32FindData entry)
-    {
-        ReadOnlySpan<char> name = MemoryMarshal.Cast<ushort, char>((ReadOnlySpan<ushort>)entry.FileName);
-        return name[0] == '.' && (name[1] == '\0' || name[1] == '.' && name[2] == '\0');
-    }
-
-    public static string NameString(in Win32FindData entry)
-    {
-        ReadOnlySpan<char> name = MemoryMarshal.Cast<ushort, char>((ReadOnlySpan<ushort>)entry.FileName);
-        var length = name.IndexOf('\0');
-        return new string(length < 0 ? name : name[..length]);
-    }
 
     public static long FileSize(in Win32FindData entry) => ((long)entry.FileSizeHigh << 32) | entry.FileSizeLow;
 

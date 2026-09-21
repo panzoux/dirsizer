@@ -105,11 +105,10 @@ sealed class Worker : IEntrySink
 
     readonly Walker _walker;
     readonly WorkQueue _queue;
-    readonly DirectoryReader _reader;
+    readonly IDirectoryEnumerator _enumerator;
     readonly BoundedTop<FileHit>? _files;
     readonly BoundedTop<FileHit> _rootFiles;
     readonly List<(DirNode Node, string Path)> _children = [];
-    Win32FindData _data;
     DirNode _node = null!;
     string _path = null!;
     long _ownSize;
@@ -120,11 +119,11 @@ sealed class Worker : IEntrySink
     public BoundedTop<FileHit>? Files => _files;
     public BoundedTop<FileHit> RootFiles => _rootFiles;
 
-    public Worker(Walker walker, WorkQueue queue, DirectoryReader reader, int top, bool collectFiles)
+    public Worker(Walker walker, WorkQueue queue, IDirectoryEnumerator enumerator, int top, bool collectFiles)
     {
         _walker = walker;
         _queue = queue;
-        _reader = reader;
+        _enumerator = enumerator;
         _files = collectFiles ? new BoundedTop<FileHit>(top) : null;
         _rootFiles = new BoundedTop<FileHit>(top);
     }
@@ -155,7 +154,7 @@ sealed class Worker : IEntrySink
         _ownSize = 0;
         _children.Clear();
         var start = Stopwatch.GetTimestamp();
-        var result = _reader.Read(path, ref _data, this);
+        var result = _enumerator.Read(path, this);
         Counters.EnumTicks += Stopwatch.GetTimestamp() - start;
         node.OwnFileSize = _ownSize;
         switch (result.Outcome)
@@ -176,10 +175,9 @@ sealed class Worker : IEntrySink
         _queue.Finish(_children);
     }
 
-    public void OnEntry(in Win32FindData entry)
+    public void OnEntry(uint attributes, long size, ReadOnlySpan<char> name)
     {
         Counters.Entries++;
-        var attributes = entry.FileAttributes;
         if ((attributes & Win32Find.DirectoryAttribute) != 0)
         {
             // A reparse-point directory (junction, directory symlink, mount point, ...) is never entered and contributes nothing.
@@ -188,14 +186,13 @@ sealed class Worker : IEntrySink
                 Counters.ReparseSkipped++;
                 return;
             }
-            var name = Win32Find.NameString(in entry);
-            var child = new DirNode(_walker.NextId(), _node.Id, name);
+            var childName = new string(name);
+            var child = new DirNode(_walker.NextId(), _node.Id, childName);
             Created.Add(child);
-            _children.Add((child, DirTable.Combine(_path, name)));
+            _children.Add((child, DirTable.Combine(_path, childName)));
             return;
         }
 
-        var size = Win32Find.FileSize(in entry);
         Counters.Files++;
         Counters.Bytes += size;
         _ownSize += size;
@@ -204,7 +201,7 @@ sealed class Worker : IEntrySink
         var forRoot = _node.Id == 0 && _rootFiles.WouldAccept(size);
         if (!forFiles && !forRoot) return;
         // The name is created only for a file that is actually kept.
-        var hit = new FileHit(_node.Id, Win32Find.NameString(in entry), size);
+        var hit = new FileHit(_node.Id, new string(name), size);
         if (forFiles) _files!.Add(hit, size);
         if (forRoot) _rootFiles.Add(hit, size);
     }
@@ -217,11 +214,12 @@ sealed record WalkResult(
     FileHit[] RootFiles,
     int PeakQueuedDirs,
     TimeSpan WalkTime,
+    string Enumerator,
     bool LargeFetch,
     ReadResult RootRead,
     string[] ErrorSamples);
 
-sealed class Walker(FindFirstFn? findFirst = null)
+sealed class Walker(IEnumeratorFactory? enumerators = null)
 {
     int _nextId;                       // the root is 0; the first id handed out is 1
     Exception? _failure;
@@ -240,12 +238,12 @@ sealed class Walker(FindFirstFn? findFirst = null)
     public WalkResult Run(DirNode root, string rootExtendedPath, int workers, int top, bool collectFiles, CancellationToken cancel, Action<long, long>? progress)
     {
         var queue = new WorkQueue();
-        var reader = new DirectoryReader(findFirst);
+        var factory = enumerators ?? new FindFirstFactory();
         var all = new List<Worker>(workers);
         var threads = new List<Thread>(workers);
         for (var index = 0; index < workers; index++)
         {
-            var worker = new Worker(this, queue, reader, top, collectFiles);
+            var worker = new Worker(this, queue, factory.Create(), top, collectFiles);
             all.Add(worker);
             // Background threads: if Run is left early, the workers must not keep the process alive.
             threads.Add(new Thread(worker.Run) { Name = $"dirsizer-worker-{index}", IsBackground = true });
@@ -314,7 +312,8 @@ sealed class Walker(FindFirstFn? findFirst = null)
             rootFiles.ToDescendingArray(),
             queue.PeakQueued,
             walkTime,
-            reader.LargeFetch,
+            factory.Name,
+            factory.LargeFetch,
             RootRead,
             samples.ToArray());
     }
