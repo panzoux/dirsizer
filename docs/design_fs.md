@@ -111,7 +111,9 @@ FIND_FIRST_EX_LARGE_FETCH)`, then `FindNextFileW` until `ERROR_NO_MORE_FILES`, t
   directory increments it *before* that directory is completed; completing a directory decrements it;
   when it reaches 0 every waiting worker is woken and exits. Idle workers wait on the lock's monitor.
 - Cancellation: Ctrl+C sets a flag that the workers check between directories; the tool prints
-  `error: canceled` and exits 1 without a result.
+  `error: canceled` and exits 1 without a result. This applies while the scan runs. Once the scan is
+  over nothing observes the flag any more, so Ctrl+C keeps its usual meaning (it ends the process),
+  which lets a long output be stopped.
 - The main thread starts the workers, shows progress, and joins them. After the join it is the only
   thread touching the model.
 
@@ -261,7 +263,8 @@ or failed); `bytes` equals `root.size`.
 
 Phases are wall-clock and exhaustive, with the same rule as the NTFS tools: `open` (root check),
 `walk` (all workers, first task to last), `aggregation`, `finalize` (top-N selection, path building),
-`other` (the residual), `total`; the runtime checks `phase_sum == total`.
+`other` (the residual), `total`; `phase_sum == total` holds by construction (`other` is the residual)
+and the self-test checks it.
 
 Work happens in parallel inside `walk`, so its parts cannot be added up as wall time. They are
 reported separately as **summed worker time**: `enum_ms_total` (reading directories: the

@@ -2523,9 +2523,13 @@ if (options.Help)
 }
 if (options.SelfTest) return FsSelfTests.Run();
 
-using var cancel = new CancellationTokenSource();
+// Not disposed on purpose: the Ctrl+C handler can still run while the process ends, and cancelling a disposed source throws.
+var cancel = new CancellationTokenSource();
+var scanning = true;
 Console.CancelKeyPress += (_, e) =>
 {
+    // Only the scan observes the token. Once it is over, Ctrl+C keeps its usual meaning, so that a long output can still be stopped.
+    if (!Volatile.Read(ref scanning)) return;
     e.Cancel = true;
     cancel.Cancel();
 };
@@ -2538,6 +2542,7 @@ try
         ShowProgress: !Console.IsErrorRedirected,
         cancel.Token);
     var result = FsScanner.Scan(options.Root, settings);
+    Volatile.Write(ref scanning, false);
     FsOutput.Write(result, options, Console.Out, Console.Error);
     return options.Strict && result.Counters.Unreadable > 0 ? 3 : 0;
 }
@@ -2699,8 +2704,13 @@ function Invoke-Tool([string]$Program, [string[]]$Arguments) {
     if ($Program -like '*.dll') { & dotnet $Program @Arguments } else { & $Program @Arguments }
 }
 function Get-Json([string]$Program, [string[]]$Arguments) {
-    $text = Invoke-Tool $Program $Arguments 2>$null
-    if ($LASTEXITCODE -notin 0, 3) { throw "$Program exited with code $LASTEXITCODE" }
+    # The tool's own error message goes to stderr; keep it, so that a failure says why.
+    $errorFile = [IO.Path]::GetTempFileName()
+    try {
+        $text = Invoke-Tool $Program $Arguments 2>$errorFile
+        $code = $LASTEXITCODE
+        if ($code -notin 0, 3) { throw "$Program exited with code ${code}: $((Get-Content -Raw $errorFile).Trim())" }
+    } finally { [IO.File]::Delete($errorFile) }
     ($text -join "`n") | ConvertFrom-Json
 }
 
@@ -2715,7 +2725,7 @@ if ($Oracle) {
                 if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
                 $sum += Get-DirectoryTotal $child
             }
-        } catch [UnauthorizedAccessException] { }
+        } catch [UnauthorizedAccessException], [IO.IOException] { }   # unreadable or vanished: counts as 0, like dirsizer
         $sum
     }
     "dirsizer against the framework's directory enumeration on $Path"
@@ -3335,6 +3345,12 @@ Implemented as `src\DirSizer.Fs`; see P5 in [roadmap.md](roadmap.md) for what wa
 `README.md`, in the Build section. Old: `` `scripts\release.ps1` publishes all three (see "Releases"). `` New: `` `scripts\release.ps1` publishes all four (see "Releases"). ``
 
 `docs\roadmap.md`, in the promotion-criteria intro. Old: `(and no combined `dirsizer.exe`)` New: `(and no combined tool that tries bulk and falls back to fsctl)`. Leave the dated P4 item "Release script publishes the three tools ..." as it is: it records what was true at v0.3.0.
+
+Found by the final review of the branch (apply after Steps 2-8):
+
+- `README.md`, the `dirsizer.exe` section. Old: `The options are those of the NTFS tools plus` New: `The options are` `` `--top`, `--files`, `--dirs`, `--json`, `--benchmark` and `--self-test` `` `as in the NTFS tools (` `` `--diagnostics` `` `is not offered), plus` (that is, replace the words "those of the NTFS tools" by that list and note that `--diagnostics` is not offered).
+- `README-jp.md`, elevation section: the sentence about `dirsizer.exe` (asInvoker, no elevation, `> file` and pipes work) was inserted in the middle of a paragraph about the NTFS tools, so that it read as if `dirsizer.exe` shows a UAC prompt. Move it to the end of the last paragraph of that section (the one that ends with "...ビルドすることも可能です。"), introduced by 「`dirsizer.exe` にはここで述べたことは当てはまりません。」, as the English README does, and change the reference `app.manifest` in that paragraph to `src\Shared\app.manifest`.
+- `docs\design_fs.md`: the sentence "the runtime checks `phase_sum == total`" becomes "`phase_sum == total` holds by construction (`other` is the residual) and the self-test checks it"; the Cancellation bullet says that Ctrl+C is only intercepted while the scan runs.
 
 - [ ] **Step 9: Commit**
 
