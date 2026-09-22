@@ -634,3 +634,38 @@ counters can move between runs; the JSON `reader` field still says `win32-find` 
 the chain ending with `NextEntryOffset` 0 (the parser is bounds-checked, so a bad chain is an error, not an
 out-of-range read); a share root (`\\server\share`) is opened by B and C without a trailing backslash and was
 not tried.
+
+### Default enumerator with a fallback
+
+Specified in [superpowers/specs/2026-09-22-fs-enumerator-default-design.md](superpowers/specs/2026-09-22-fs-enumerator-default-design.md),
+implemented on branch `feature/fs-enumerator-default`. `--enumerator=auto` (B, `handle:full:64`, falling back
+to A, `find`, only when the very first directory-listing query for a directory fails with
+`ERROR_INVALID_PARAMETER`, i.e. an unsupported information class) is available regardless of the outcome
+below; the fallback is scan-wide and one-way, never re-probes B, and is never triggered by an ordinary
+failure (access denied, a later query failing mid-directory, a malformed buffer). 39 self-tests (JIT and
+NativeAOT), and a real-hardware smoke check (`auto` snapshot-equal to `find` on `T:\`, `C:\Program
+Files\dotnet`, `C:\Windows\System32\drivers` and `D:\` exFAT, with no fallback triggered anywhere in this
+environment — `handle:full:64` already works on every file system tested here).
+
+**Re-measurement** (10 timed rounds, one untimed warm-up pass first, `find`/`handle:full:64`/`auto`
+alternated with the order rotated each round, workers=8, real `C:\`, NativeAOT build):
+
+| Enumerator | `walk_ms` min / median / max | `enum_ms_total` median | entries/s median | median vs `find` |
+| --- | --- | --- | --- | --- |
+| `find` | 17,959.2 / 18,761.7 / 28,989.0 | 139,880.3 | 53,622 | |
+| `handle:full:64` | 16,525.1 / 17,545.8 / 24,016.7 | 131,209.6 | 56,844 | -6.5 % |
+| `auto` (no fallback triggered) | 17,100.7 / 17,292.4 / 22,205.1 | 133,360.1 | 57,119 | -7.8 % |
+
+`mh` (median `handle:full:64`) / `mf` (median `find`) = 17,545.8 / 18,761.7 = **0.9352**. `auto` vs
+`handle:full:64`: -1.4 % (`auto` was marginally *faster* than its own primary in this run, well within
+noise) — confirms the wrapper adds no measurable overhead.
+
+**Decision:** the pass condition (`mh <= 0.90 * mf`) is **not met** (`0.9352 > 0.90`, a 6.5 % reduction
+against the 10 % bar). `EnumeratorSpec.Default` **stays `find`**; no code change was made. This second,
+more-controlled measurement (10 rounds vs the original 5) gives a *smaller* effect size than the frozen
+baseline's -9.1 % (both below the bar), which is consistent with the methodology critique: the original
+-9.1 % was itself likely on the optimistic side of run-to-run noise, not an underestimate. `--enumerator=auto`
+remains available and fully tested for anyone who wants B with a safety net; it is simply not the shipped
+default. No worker sweep was done (nothing qualified). The wide max/min spread in this run (`find`: 17,959 to
+28,989 ms) again confirms `C:\` is a noisy measurement target session to session; only numbers from the same
+alternating run are comparable.
