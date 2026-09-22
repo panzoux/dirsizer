@@ -24,6 +24,7 @@ static partial class FsSelfTests
         tests.Add(new("ReadResult.FirstQuery defaults to false and the two-argument constructor is unaffected", ReadResultFirstQueryDefaultsToFalse));
         tests.Add(new("FallbackEnumerator falls back only on a first-query ERROR_INVALID_PARAMETER, never re-probes once triggered", FallbackTriggersOnlyOnFirstQueryUnsupportedError));
         tests.Add(new("AutoFactory wires handle:full:64 and find behind one shared FallbackState", AutoFactoryWiring));
+        tests.Add(new("the whole walk reports enumerator_fallback when auto's primary is found unsupported", WalkReportsFallbackWhenAutoTriggers));
     }
 
     static void ReadResultFirstQueryDefaultsToFalse()
@@ -130,6 +131,54 @@ static partial class FsSelfTests
         AssertEqual(2, sink2.Entries.Count, "e2: both entries listed");
         Assert(factory.FallbackEnumerator == "find", "FallbackEnumerator is find once triggered");
         Assert(factory.FallbackReason!.Contains("87"), $"FallbackReason mentions the error code: {factory.FallbackReason}");
+    }
+
+    static void WalkReportsFallbackWhenAutoTriggers()
+    {
+        using var tree = StandardTree();
+        var (expected, fileCount) = Oracle(tree.Base);
+
+        // A test-only factory shaped like AutoFactory but built from fakes: its very first Read() call fails
+        // the way an unsupported class would; every worker shares the wrapper's state, exactly as AutoFactory
+        // wires real workers, so the whole tree still gets read correctly, entirely through the secondary.
+        var state = new FallbackState();
+        IDirectoryEnumerator MakeWrapped() => new FallbackEnumerator(
+            new FirstCallFailsEnumerator(state), new FindFirstFactory().Create(), state);
+        var factory = new TestFallbackFactory(MakeWrapped, state);
+
+        foreach (var workers in new[] { 1, 3, 8 })
+        {
+            var label = $"workers={workers}";
+            var result = Scan(tree.Root, workers, files: true, top: 5, enumerators: factory);
+            AssertSameTotals(expected, TotalsOf(result.Nodes), label);
+            AssertEqual(fileCount, result.Counters.Files, $"{label}: files");
+            AssertEqual(0L, result.Counters.Unreadable, $"{label}: nothing counted as failed because of the fallback");
+            AssertEqual("find", result.Metrics.EnumeratorFallback, $"{label}: the fallback is reported");
+            Assert(result.Metrics.EnumeratorFallbackReason!.Contains("87"), $"{label}: the reason mentions the error code");
+        }
+
+        // No trigger: both fields stay null.
+        var clean = Scan(tree.Root, 4, enumerators: new FindFirstFactory());
+        AssertEqual(null, clean.Metrics.EnumeratorFallback, "no fallback: null");
+        AssertEqual(null, clean.Metrics.EnumeratorFallbackReason, "no fallback: null");
+    }
+
+    // Fails the first Read() call of the whole run (Complete/first-query/87), succeeds every call after that
+    // (state.Triggered will be true by then, so FallbackEnumerator never calls this again in practice, but a
+    // real success response is here too in case a worker's already-in-flight call reaches it).
+    sealed class FirstCallFailsEnumerator(FallbackState state) : IDirectoryEnumerator
+    {
+        public ReadResult Read(string directoryPath, IEntrySink sink) =>
+            state.Triggered ? new ReadResult(ReadOutcome.Complete, 0) : new ReadResult(ReadOutcome.Failed, Win32Find.ErrorInvalidParameter, true);
+    }
+
+    sealed class TestFallbackFactory(Func<IDirectoryEnumerator> create, FallbackState state) : IEnumeratorFactory
+    {
+        public string Name => "test-auto";
+        public bool LargeFetch => false;
+        public string? FallbackEnumerator => state.Triggered ? "find" : null;
+        public string? FallbackReason => state.Triggered ? $"test trigger (error {Win32Find.ErrorInvalidParameter})" : null;
+        public IDirectoryEnumerator Create() => create();
     }
 
     static void EnumeratorsListLikeTheFramework()

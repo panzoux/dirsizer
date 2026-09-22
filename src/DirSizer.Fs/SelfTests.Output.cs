@@ -15,7 +15,7 @@ static partial class FsSelfTests
     {
         var zero = TimeSpan.Zero;
         var counters = new FsCounters(5, denied, failed, 1, 8, 20, 1234);
-        var metrics = new FsMetrics(zero, TimeSpan.FromSeconds(1), zero, zero, TimeSpan.FromSeconds(1), zero, zero, 4, true, "find", 0, 30, 8, 1234, 0, 0);
+        var metrics = new FsMetrics(zero, TimeSpan.FromSeconds(1), zero, zero, TimeSpan.FromSeconds(1), zero, zero, 4, true, "find", null, null, 0, 30, 8, 1234, 0, 0);
         return new FsResult(@"C:\r", new ResultItem(@"C:\r", 1234), [], [new ResultItem(@"C:\r", 1234)], [], counters, metrics, samples, [new DirNode(0, -1, @"C:\r")]);
     }
 

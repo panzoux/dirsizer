@@ -216,6 +216,8 @@ sealed record WalkResult(
     TimeSpan WalkTime,
     string Enumerator,
     bool LargeFetch,
+    string? EnumeratorFallback,
+    string? EnumeratorFallbackReason,
     ReadResult RootRead,
     string[] ErrorSamples);
 
@@ -314,6 +316,8 @@ sealed class Walker(IEnumeratorFactory? enumerators = null)
             walkTime,
             factory.Name,
             factory.LargeFetch,
+            factory.FallbackEnumerator,
+            factory.FallbackReason,
             RootRead,
             samples.ToArray());
     }
