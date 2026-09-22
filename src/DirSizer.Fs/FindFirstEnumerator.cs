@@ -62,5 +62,8 @@ sealed class FindFirstFactory(bool largeFetch = true, FindFirstFn? findFirst = n
 
     public bool LargeFetch => _state.On;
 
+    public string? FallbackEnumerator => null;
+    public string? FallbackReason => null;
+
     public IDirectoryEnumerator Create() => new FindFirstEnumerator(_state, _findFirst);
 }

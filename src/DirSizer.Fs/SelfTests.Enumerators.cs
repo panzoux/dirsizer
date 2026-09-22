@@ -23,6 +23,7 @@ static partial class FsSelfTests
         tests.Add(new("every enumerator walks the standard tree like the oracle, with 1, 3 and 8 workers", EnumeratorsWalkLikeTheOracle));
         tests.Add(new("ReadResult.FirstQuery defaults to false and the two-argument constructor is unaffected", ReadResultFirstQueryDefaultsToFalse));
         tests.Add(new("FallbackEnumerator falls back only on a first-query ERROR_INVALID_PARAMETER, never re-probes once triggered", FallbackTriggersOnlyOnFirstQueryUnsupportedError));
+        tests.Add(new("AutoFactory wires handle:full:64 and find behind one shared FallbackState", AutoFactoryWiring));
     }
 
     static void ReadResultFirstQueryDefaultsToFalse()
@@ -97,6 +98,38 @@ static partial class FsSelfTests
         AssertEqual(ReadOutcome.Failed, result5.Outcome, "case 5: a first-query error that is not 87 is not treated as unsupported");
         AssertEqual(32, result5.Error, "case 5: the real error is kept");
         Assert(!state5.Triggered, "case 5: not triggered");
+    }
+
+    static void AutoFactoryWiring()
+    {
+        using var tree = new TempTree();
+        tree.MakeFile("one.txt", 10);
+        tree.MakeDir("sub");
+
+        var factory = new AutoFactory();
+        AssertEqual("auto", factory.Name, "AutoFactory.Name");
+        AssertEqual(false, factory.LargeFetch, "AutoFactory.LargeFetch is always false");
+        AssertEqual(null, factory.FallbackEnumerator, "not yet triggered: null");
+        AssertEqual(null, factory.FallbackReason, "not yet triggered: null");
+
+        // Two instances, created before the shared state is triggered, simulating two workers.
+        var e1 = factory.Create();
+        var e2 = factory.Create();
+        factory.TestOnlyState.TryTrigger(Win32Find.ErrorInvalidParameter);
+
+        var expected = new FindFirstFactory().Create().Read(tree.Base, new CollectingSink());
+        var sink1 = new CollectingSink();
+        var result1 = e1.Read(tree.Base, sink1);
+        var sink2 = new CollectingSink();
+        var result2 = e2.Read(tree.Base, sink2);
+        // Both instances observe the same (already-triggered) state, proving they share one FallbackState:
+        // two separate, unshared states would leave at least one of them untriggered and still trying B.
+        AssertEqual(expected.Outcome, result1.Outcome, "e1: matches a plain find read (the secondary really is find)");
+        AssertEqual(expected.Outcome, result2.Outcome, "e2: same, proving the state is shared, not per-instance");
+        AssertEqual(2, sink1.Entries.Count, "e1: both entries listed");
+        AssertEqual(2, sink2.Entries.Count, "e2: both entries listed");
+        Assert(factory.FallbackEnumerator == "find", "FallbackEnumerator is find once triggered");
+        Assert(factory.FallbackReason!.Contains("87"), $"FallbackReason mentions the error code: {factory.FallbackReason}");
     }
 
     static void EnumeratorsListLikeTheFramework()

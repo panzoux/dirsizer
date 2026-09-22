@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Threading;
 
 // Shared by all workers of a run: once B is found unsupported, every Read that STARTS after that point uses
@@ -35,4 +36,26 @@ sealed class FallbackEnumerator(IDirectoryEnumerator primary, IDirectoryEnumerat
         }
         return result;
     }
+}
+
+sealed class AutoFactory : IEnumeratorFactory
+{
+    readonly BufferedFactory _primary = new(new EnumeratorSpec(EnumeratorKind.Handle, EntryClass.Full, false, EnumeratorSpec.DefaultBufferKiB));
+    readonly FindFirstFactory _secondary = new();
+    readonly FallbackState _state = new();
+
+    public string Name => "auto";
+    public bool LargeFetch => false;
+
+    public string? FallbackEnumerator => _state.Triggered ? _secondary.Name : null;
+    public string? FallbackReason => _state.Triggered
+        ? $"{_primary.Name} not supported here: {Marshal.GetPInvokeErrorMessage(_state.Reason).TrimEnd()} (error {_state.Reason})"
+        : null;
+
+    public IDirectoryEnumerator Create() => new FallbackEnumerator(_primary.Create(), _secondary.Create(), _state);
+
+    // Self-tests only (see SelfTests.Enumerators.cs, AutoFactoryWiring): lets a test force the shared state
+    // without a real unsupported file system, to prove the wiring (which factory is primary, which is
+    // secondary, that both share one state) independently of B's own already-proven correctness.
+    internal FallbackState TestOnlyState => _state;
 }

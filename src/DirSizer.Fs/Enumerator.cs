@@ -40,6 +40,11 @@ interface IEnumeratorFactory
     // rejects it). False for every other enumerator.
     bool LargeFetch { get; }
 
+    // Non-null once a fallback has actually triggered during this run: the enumerator that was used instead of
+    // Name, and why. Null for every factory that has no fallback (every one except AutoFactory).
+    string? FallbackEnumerator { get; }
+    string? FallbackReason { get; }
+
     // One instance per worker.
     IDirectoryEnumerator Create();
 }

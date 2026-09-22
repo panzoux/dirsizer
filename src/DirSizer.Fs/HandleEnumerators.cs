@@ -175,6 +175,9 @@ sealed class BufferedFactory(EnumeratorSpec spec) : IEnumeratorFactory
 
     public bool LargeFetch => false;
 
+    public string? FallbackEnumerator => null;
+    public string? FallbackReason => null;
+
     public IDirectoryEnumerator Create() => spec.Kind == EnumeratorKind.Handle
         ? new HandleInfoEnumerator(spec.Class, spec.BufferKiB)
         : new NtQueryEnumerator(spec.Class, spec.BufferKiB);
