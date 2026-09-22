@@ -22,6 +22,7 @@ static partial class FsSelfTests
         tests.Add(new("every enumerator shows the reparse attribute of a junction entry", EnumeratorsShowJunctions));
         tests.Add(new("every enumerator walks the standard tree like the oracle, with 1, 3 and 8 workers", EnumeratorsWalkLikeTheOracle));
         tests.Add(new("ReadResult.FirstQuery defaults to false and the two-argument constructor is unaffected", ReadResultFirstQueryDefaultsToFalse));
+        tests.Add(new("FallbackEnumerator falls back only on a first-query ERROR_INVALID_PARAMETER, never re-probes once triggered", FallbackTriggersOnlyOnFirstQueryUnsupportedError));
     }
 
     static void ReadResultFirstQueryDefaultsToFalse()
@@ -29,6 +30,73 @@ static partial class FsSelfTests
         AssertEqual(false, default(ReadResult).FirstQuery, "a default ReadResult has FirstQuery false");
         AssertEqual(false, new ReadResult(ReadOutcome.Complete, 0).FirstQuery, "the two-argument constructor defaults FirstQuery to false");
         AssertEqual(true, new ReadResult(ReadOutcome.Failed, 87, true).FirstQuery, "the three-argument constructor sets it");
+    }
+
+    // A fake IDirectoryEnumerator whose Read() returns a pre-programmed sequence of results, one per call,
+    // repeating the last one after the sequence is exhausted. Used only to drive FallbackEnumerator without
+    // touching real Win32/ntdll calls.
+    sealed class ScriptedEnumerator(params ReadResult[] results) : IDirectoryEnumerator
+    {
+        int _calls;
+        public int Calls => _calls;
+
+        public ReadResult Read(string directoryPath, IEntrySink sink)
+        {
+            var index = Math.Min(_calls, results.Length - 1);
+            _calls++;
+            return results[index];
+        }
+    }
+
+    static void FallbackTriggersOnlyOnFirstQueryUnsupportedError()
+    {
+        // Case 1: the first query fails with FirstQuery=true, Error=87 -> falls back, not counted Failed by
+        // the wrapper itself (Worker's own counting is exercised in the whole-walk test below).
+        var state1 = new FallbackState();
+        var primary1 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Failed, Win32Find.ErrorInvalidParameter, true));
+        var secondary1 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Complete, 0));
+        var sink = new CollectingSink();
+        var result1 = new FallbackEnumerator(primary1, secondary1, state1).Read(@"\\?\C:\anything", sink);
+        AssertEqual(ReadOutcome.Complete, result1.Outcome, "case 1: the secondary's result is returned, not the primary's Failed");
+        AssertEqual(1, secondary1.Calls, "case 1: the secondary was used for this directory");
+        Assert(state1.Triggered, "case 1: the shared state is now triggered");
+        AssertEqual(Win32Find.ErrorInvalidParameter, state1.Reason, "case 1: the reason is recorded");
+
+        // Case 2: a later query (not the first) fails with the same error code -> ordinary Failed, no trigger.
+        var state2 = new FallbackState();
+        var primary2 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Failed, Win32Find.ErrorInvalidParameter, false));
+        var secondary2 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Complete, 0));
+        var result2 = new FallbackEnumerator(primary2, secondary2, state2).Read(@"\\?\C:\anything", sink);
+        AssertEqual(ReadOutcome.Failed, result2.Outcome, "case 2: a non-first-query failure is returned as-is");
+        AssertEqual(Win32Find.ErrorInvalidParameter, result2.Error, "case 2: the error is kept");
+        AssertEqual(0, secondary2.Calls, "case 2: the secondary was never used");
+        Assert(!state2.Triggered, "case 2: the shared state is not triggered");
+
+        // Case 3: a fresh FallbackEnumerator whose shared state is already triggered never calls its primary.
+        var state3 = new FallbackState();
+        state3.TryTrigger(Win32Find.ErrorInvalidParameter);
+        var primary3 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Failed, 999, true));   // would fail loudly if ever called
+        var secondary3 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Complete, 0));
+        var result3 = new FallbackEnumerator(primary3, secondary3, state3).Read(@"\\?\C:\anything", sink);
+        AssertEqual(ReadOutcome.Complete, result3.Outcome, "case 3: goes straight to the secondary");
+        AssertEqual(0, primary3.Calls, "case 3: the primary is never called once the state is triggered");
+
+        // Other outcomes and other errors on the first query never trigger: Denied, and a first-query error
+        // that is not 87.
+        var state4 = new FallbackState();
+        var primary4 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Denied, Win32Find.ErrorAccessDenied, true));
+        var secondary4 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Complete, 0));
+        var result4 = new FallbackEnumerator(primary4, secondary4, state4).Read(@"\\?\C:\anything", sink);
+        AssertEqual(ReadOutcome.Denied, result4.Outcome, "case 4: Denied passes through untouched");
+        Assert(!state4.Triggered, "case 4: Denied never triggers");
+
+        var state5 = new FallbackState();
+        var primary5 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Failed, 32, true));   // ERROR_SHARING_VIOLATION, first query
+        var secondary5 = new ScriptedEnumerator(new ReadResult(ReadOutcome.Complete, 0));
+        var result5 = new FallbackEnumerator(primary5, secondary5, state5).Read(@"\\?\C:\anything", sink);
+        AssertEqual(ReadOutcome.Failed, result5.Outcome, "case 5: a first-query error that is not 87 is not treated as unsupported");
+        AssertEqual(32, result5.Error, "case 5: the real error is kept");
+        Assert(!state5.Triggered, "case 5: not triggered");
     }
 
     static void EnumeratorsListLikeTheFramework()
