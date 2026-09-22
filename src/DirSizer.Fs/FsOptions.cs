@@ -64,7 +64,8 @@ sealed class FsOptions
             --enumerator=NAME[:CLASS[:KiB]]
                         Advanced, for comparisons: how directories are read. find (default),
                         find:nolarge, handle[:full|idextd[:KiB]], nt[:dir|full|idextd[:KiB]]
-                        (idextd is not supported on exFAT)
+                        (idextd is not supported on exFAT), or auto (handle:full:64, falling
+                        back to find if that class is not supported here)
             --benchmark Print phase timings and memory measurements to stderr
             --self-test Run the built-in tests (uses a temporary folder)
             -h          Show this help
