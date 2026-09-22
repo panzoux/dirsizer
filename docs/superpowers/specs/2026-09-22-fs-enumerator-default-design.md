@@ -33,14 +33,15 @@ before the shipped default may change.
 
 ## Scope
 
-**In scope:** a fallback wrapper enumerator and its shared state; wiring it in as the new default's
-implementation (selectable explicitly as `--enumerator=auto` regardless of what the shipped default ends up
-being); reporting; self-tests with a controllable fake; a real-hardware smoke check; the re-measurement that
-gates flipping `EnumeratorSpec.Default`, and flipping it only if that re-measurement clears the bar.
+**In scope:** a fallback wrapper enumerator and its shared state, exposed as the explicitly-selectable
+`--enumerator=auto` (`EnumeratorSpec.Default` itself is untouched by this — see "Selecting `auto`");
+reporting; self-tests with a controllable fake plus one wiring test on the real `AutoFactory`; a
+real-hardware smoke check; the re-measurement that gates flipping `EnumeratorSpec.Default`, and flipping it
+only if that re-measurement clears the bar.
 
 **Out of scope:** any fallback for C (never a default, see "Background"); re-probing B later in the same run
 once a fallback has triggered; per-volume or per-root fallback state (one shared state per scan, see
-"Detection scope" below); changing the 10% bar itself; cold-cache measurement, a second machine, ReFS,
+"`FallbackState`" below); changing the 10% bar itself; cold-cache measurement, a second machine, ReFS,
 network shares (still unverified, as recorded in design_fs.md's capability matrix).
 
 ## Architecture
@@ -100,8 +101,10 @@ New file `EnumeratorFallback.cs`. Mirrors the existing `LargeFetchState` pattern
 (shared, thread-safe, one-way, one instance per scan):
 
 ```csharp
-// Shared by all workers of a run: once B is found unsupported, every worker (including ones already running)
-// switches to A for the rest of the scan. One-way, like LargeFetchState: never re-probes B afterwards.
+// Shared by all workers of a run: once B is found unsupported, every Read that STARTS after that point uses
+// A instead. A B.Read() already in progress when the flag flips is not interrupted — it is allowed to finish
+// (the check is made once, at the start of Read, not partway through). One-way, like LargeFetchState: never
+// re-probes B afterwards.
 sealed class FallbackState
 {
     int _reasonError;   // 0 = not triggered; Interlocked, first writer wins
@@ -146,7 +149,10 @@ caller still falls through to `secondary.Read`, so the directory that revealed t
 immediately and is never counted as `Failed`. Other workers already mid-directory with B may independently
 hit the same error on their own directory before the flag is visible to them; each just falls through the
 same way — harmless, no directory is double-read or double-counted, since `Walker`/`Worker` only ever sees
-one final `ReadResult` per directory.
+one final `ReadResult` per directory. Precisely: **a `Read` call already past the `state.Triggered` check
+when the flag flips runs to completion with B**, whatever it returns; only a `Read` call that has not yet
+started (the next directory a worker takes off the queue) is affected. This is a deliberate, harmless race —
+not a bug to close — and does not change the "no double-read, no double-count" guarantee.
 
 ### Factory and reporting hook
 
@@ -187,6 +193,11 @@ sealed class AutoFactory : IEnumeratorFactory
         : null;
 
     public IDirectoryEnumerator Create() => new FallbackEnumerator(_primary.Create(), _secondary.Create(), _state);
+
+    // Self-tests only (see "Testing"): lets a test force the shared state without going through a real
+    // unsupported file system, to prove the wiring (which factory is primary, which is secondary, that both
+    // share one state) independently of B's own already-proven correctness.
+    internal FallbackState TestOnlyState => _state;
 }
 ```
 
@@ -200,13 +211,18 @@ is exactly how the existing `LargeFetch` fallback-to-off is reported truthfully 
 
 ## Selecting `auto`
 
-`EnumeratorSpec.cs`: `EnumeratorKind` gains `Auto`. `EnumeratorSpec.Default` becomes
-`new(EnumeratorKind.Auto, EntryClass.None, true, 0)` (the `LargeFetch` field only matters for `Find` and is
-otherwise ignored, exactly as today for `Handle`/`Nt`). `Parse` gains a case `"auto"` (no class, no buffer
-size — same shape restriction as `"find"`) so it is explicitly selectable, e.g. for
-`Compare-Enumerators.ps1` and the self-tests, independent of whatever the shipped default is. `Canonical`
-returns `"auto"` for `EnumeratorKind.Auto`. `CreateFactory` returns `new AutoFactory()` for
-`EnumeratorKind.Auto`.
+`EnumeratorSpec.cs`: `EnumeratorKind` gains `Auto`. **`EnumeratorSpec.Default` is *not* touched by the main
+implementation task — it stays `new(EnumeratorKind.Find, EntryClass.None, true, 0)`, exactly as it is on
+`feature/fs-enumerator-benchmark` today.** `auto` is added purely as a new, explicitly-selectable value
+(`--enumerator=auto`), on equal footing with `find`/`handle`/`nt`, until the rollout gate says otherwise.
+Changing `EnumeratorSpec.Default` to `Auto` is the *only* code change the rollout gate's "confirmed" branch
+makes (see "Rollout gate" below) — it is not part of this section's task. This keeps the meaning of the
+branch unambiguous while it is being built: **a branch that adds a fallback mechanism and `--enumerator=auto`,
+not a branch that necessarily changes the default.**
+
+`Parse` gains a case `"auto"` (no class, no buffer size — same shape restriction as `"find"`) so it is
+explicitly selectable, e.g. for `Compare-Enumerators.ps1` and the self-tests. `Canonical` returns `"auto"`
+for `EnumeratorKind.Auto`. `CreateFactory` returns `new AutoFactory()` for `EnumeratorKind.Auto`.
 
 Every other spelling (`find...`, `find:nolarge`, `handle...`, `nt...`) is unaffected and keeps meaning
 exactly what it says: **no wrapper, no shared state, a real failure is `Failed`.** This is what "explicit
@@ -234,9 +250,13 @@ same `JsonNamingPolicy` as every other field): `enumerator_fallback`, `enumerato
 
 `FsOutput.BenchmarkLine`: the existing `enumerator={m.Enumerator}` segment becomes conditional —
 
+`large_fetch` reports `find`'s own `LARGE_FETCH` state and is otherwise `off` (`AutoFactory.LargeFetch` is
+`false`, same as `BufferedFactory` today — it only ever means something for `find` itself; `auto`'s `find`
+fallback path, if it triggers, still uses `LARGE_FETCH` internally, this field just doesn't surface it):
+
 ```
-enumerator=auto, large_fetch=on, ...                                           (no fallback)
-enumerator=auto (fallback: find, reason=handle:full:64 not supported here: ... (error 87)), large_fetch=on, ...   (fallback happened)
+enumerator=auto, large_fetch=off, ...                                          (no fallback)
+enumerator=auto (fallback: find, reason=handle:full:64 not supported here: ... (error 87)), large_fetch=off, ...   (fallback happened)
 ```
 
 i.e. `enumerator={m.Enumerator}{(m.EnumeratorFallback is null ? "" : $" (fallback: {m.EnumeratorFallback}, reason={m.EnumeratorFallbackReason})")}`.
@@ -249,7 +269,11 @@ if (result.Metrics.EnumeratorFallback is not null)
     error.WriteLine($"warning: enumerator {result.Metrics.Enumerator} fell back to {result.Metrics.EnumeratorFallback}: {result.Metrics.EnumeratorFallbackReason}");
 ```
 
-This prints regardless of `--benchmark`, so it is visible in ordinary use, not only in diagnostics.
+This prints regardless of `--benchmark`, so it is visible in ordinary use, not only in diagnostics. **It is
+printed once, after the whole scan finishes** (same place and timing as the existing `Unreadable` warning),
+**not at the instant the fallback triggers** — there is no new mid-scan notification path from a worker
+thread to stderr, and this design does not add one; that would be additional scope this branch does not
+need.
 
 ## Testing
 
@@ -273,6 +297,16 @@ without touching real Win32/ntdll calls. Cases to cover:
    `Failed`, counted, no fallback — proves explicit selection really has no wrapper.
 6. `EnumeratorSpec.Parse("auto")` round-trips to `Canonical == "auto"`; `"auto:full"` and similar are
    rejected the same way `"find:full"` already is.
+7. **`AutoFactory` wiring** (the real production class, not a fake — this is the one thing the fakes above
+   cannot prove): give `AutoFactory` an `internal` accessor to its `FallbackState`
+   (`internal FallbackState TestOnlyState => _state;` — self-tests live in the same assembly, so `internal`
+   is enough, no public surface added). A test manually calls `TestOnlyState.TryTrigger(87)` on one
+   `AutoFactory` instance, then calls `Create()` and `Read()` on a real, existing directory (the standard
+   `TempTree` fixture): the result must match a plain `find` read of the same directory exactly (proving the
+   secondary really is `find`), even though the real B path (`GetFileInformationByHandleEx`) is never
+   exercised by this test — B itself is already proven correct by the benchmark branch's own conformance
+   tests, so this test's only job is the wiring (primary is a `handle:full:64` factory, secondary is a
+   `find` factory, both `Create()` calls share the one `FallbackState`), not B's behaviour again.
 
 **Real-hardware smoke check** (manual, via `Compare-Enumerators.ps1`, part of the implementation plan, not
 a self-test): `--enumerator=auto` against exFAT `D:\` (where `handle:full` already works — no trigger
@@ -284,20 +318,32 @@ expected to trigger it; the mechanism is exercised for real only by the fakes ab
 ## Rollout gate: does the shipped default actually change?
 
 After the mechanism is implemented, tested, and committed: re-run `Compare-Enumerators.ps1 -Time` for
-`find` vs `handle:full:64` (the same variant `auto`'s primary uses) on W1 (`C:\`, workers=8), with **more
-rounds than the original 5** (implementer's judgement, at least 10, spread if practical rather than all
-back-to-back) to address the methodology critique above. Two outcomes:
+`find`, `handle:full:64` (the variant `auto`'s primary uses) **and `auto` itself** on W1 (`C:\`, workers=8),
+with **more rounds than the original 5** (implementer's judgement, at least 10, spread if practical rather
+than all back-to-back) to address the methodology critique above. `auto` is included in this run only to
+confirm the wrapper's overhead is negligible (its `state.Triggered` check on every call is expected to cost
+nothing measurable): the pass/fail decision itself is made on `handle:full:64` alone, exactly as the frozen
+baseline's adoption rule already does, not on `auto`'s number.
 
-- **Median `walk_ms` is ≥10% lower than `find`, confirmed:** change `EnumeratorSpec.Default` to
-  `EnumeratorKind.Auto`. Update `docs/design_fs.md` ("Enumerator comparison (P4)", "Results" and "Adoption
-  rule" sections) and `docs/roadmap.md` with the new numbers and the decision. `find` remains fully
-  supported via `--enumerator=find`.
-- **It does not confirm (stays below 10%, or is inconsistent):** `EnumeratorSpec.Default` stays `find`. The
-  mechanism, `--enumerator=auto`, and its tests are still merged (they are correct, tested, and useful on
-  their own for anyone who opts in) — this is a valid, documented outcome of the branch, not a failure to
-  fix. Record the re-measured numbers and this decision in the same two documents.
+**Pass condition, stated exactly** (same "at least 10% lower" wording as `design_fs.md`'s adoption rule,
+made unambiguous): let `mh` = median `walk_ms` of `handle:full:64` and `mf` = median `walk_ms` of `find`
+over this re-run. The rule passes when `mh <= 0.90 * mf` (a reduction of exactly 10% counts as passing; less
+than 10% does not).
 
-Either way, the branch's own self-tests (all of them, including the six cases above) must be green, and a
+Two outcomes:
+
+- **`mh <= 0.90 * mf`, confirmed:** change `EnumeratorSpec.Default` to `EnumeratorKind.Auto` — this is the
+  only code change this outcome makes; everything else was already built and merged in the main
+  implementation task. Update `docs/design_fs.md` ("Enumerator comparison (P4)", "Results" and "Adoption
+  rule" sections) and `docs/roadmap.md` with the new numbers (including `auto`'s own median, to show the
+  wrapper added no measurable overhead) and the decision. `find` remains fully supported via
+  `--enumerator=find`.
+- **`mh > 0.90 * mf`:** `EnumeratorSpec.Default` stays `find` — no code change. The mechanism,
+  `--enumerator=auto`, and its tests are still merged (they are correct, tested, and useful on their own for
+  anyone who opts in) — this is a valid, documented outcome of the branch, not a failure to fix. Record the
+  re-measured numbers and this decision in the same two documents.
+
+Either way, the branch's own self-tests (all of them, including the seven cases above) must be green, and a
 NativeAOT `--self-test` run must pass, before either document is updated with the final decision.
 
 ## Not part of this work
