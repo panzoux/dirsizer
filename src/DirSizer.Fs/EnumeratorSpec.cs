@@ -1,4 +1,4 @@
-enum EnumeratorKind { Find, Handle, Nt }
+enum EnumeratorKind { Find, Handle, Nt, Auto }
 
 // The information class of a handle-based enumerator: what each directory entry contains. Only what the walk needs is read from it.
 enum EntryClass { None, Dir, Full, IdExtd }
@@ -17,6 +17,7 @@ sealed record EnumeratorSpec(EnumeratorKind Kind, EntryClass Class, bool LargeFe
     {
         EnumeratorKind.Find => LargeFetch ? "find" : "find:nolarge",
         EnumeratorKind.Handle => $"handle:{ClassName(Class)}:{BufferKiB}",
+        EnumeratorKind.Auto => "auto",
         _ => $"nt:{ClassName(Class)}:{BufferKiB}",
     };
 
@@ -27,15 +28,18 @@ sealed record EnumeratorSpec(EnumeratorKind Kind, EntryClass Class, bool LargeFe
         switch (parts[0])
         {
             case "find":
-                if (parts.Length == 1) return Default;
-                if (parts.Length == 2 && parts[1] == "nolarge") return Default with { LargeFetch = false };
+                if (parts.Length == 1) return new EnumeratorSpec(EnumeratorKind.Find, EntryClass.None, true, 0);
+                if (parts.Length == 2 && parts[1] == "nolarge") return new EnumeratorSpec(EnumeratorKind.Find, EntryClass.None, false, 0);
                 throw new ArgumentException("--enumerator find takes no class or buffer size; use find or find:nolarge.");
             case "handle":
                 return ParseBuffered(EnumeratorKind.Handle, parts, [EntryClass.Full, EntryClass.IdExtd], "handle: classes are full and idextd");
             case "nt":
                 return ParseBuffered(EnumeratorKind.Nt, parts, [EntryClass.Dir, EntryClass.Full, EntryClass.IdExtd], "nt: classes are dir, full and idextd");
+            case "auto":
+                if (parts.Length == 1) return new EnumeratorSpec(EnumeratorKind.Auto, EntryClass.None, false, 0);
+                throw new ArgumentException("--enumerator auto takes no class or buffer size.");
             default:
-                throw new ArgumentException($"Unknown enumerator '{text}'. Use find, find:nolarge, handle[:class[:KiB]] or nt[:class[:KiB]].");
+                throw new ArgumentException($"Unknown enumerator '{text}'. Use find, find:nolarge, handle[:class[:KiB]], nt[:class[:KiB]] or auto.");
         }
     }
 
@@ -66,7 +70,12 @@ sealed record EnumeratorSpec(EnumeratorKind Kind, EntryClass Class, bool LargeFe
         _ => "idextd",
     };
 
-    // The find-first delegate is the self-test's injection point and only means something for `find`.
-    public IEnumeratorFactory CreateFactory(FindFirstFn? findFirst = null) =>
-        Kind == EnumeratorKind.Find ? new FindFirstFactory(LargeFetch, findFirst) : new BufferedFactory(this);
+    // The find-first delegate is the self-test's injection point and only means something for `find` (and,
+    // through it, for auto's internal secondary, which does not accept one — see the design spec).
+    public IEnumeratorFactory CreateFactory(FindFirstFn? findFirst = null) => Kind switch
+    {
+        EnumeratorKind.Find => new FindFirstFactory(LargeFetch, findFirst),
+        EnumeratorKind.Auto => new AutoFactory(),
+        _ => new BufferedFactory(this),
+    };
 }
