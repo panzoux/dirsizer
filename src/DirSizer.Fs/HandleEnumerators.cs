@@ -63,13 +63,14 @@ abstract class BufferedEnumerator(int bufferKiB, int nameOffset) : IDirectoryEnu
             var first = true;
             while (true)
             {
+                var wasFirst = first;
                 var error = Query(handle, first, out var bytes);
                 first = false;
                 if (error == Win32Find.ErrorNoMoreFiles) return new ReadResult(ReadOutcome.Complete, 0);
-                if (error != 0) return new ReadResult(ReadOutcome.Failed, error);
+                if (error != 0) return new ReadResult(ReadOutcome.Failed, error, wasFirst);
                 // A query that succeeds without an entry means that the buffer is too small, not that the directory is finished.
-                if (bytes <= 0) return new ReadResult(ReadOutcome.Failed, DirectoryHandle.ErrorInsufficientBuffer);
-                if (!Parse(bytes, sink)) return new ReadResult(ReadOutcome.Failed, DirectoryHandle.ErrorInvalidData);
+                if (bytes <= 0) return new ReadResult(ReadOutcome.Failed, DirectoryHandle.ErrorInsufficientBuffer, wasFirst);
+                if (!Parse(bytes, sink)) return new ReadResult(ReadOutcome.Failed, DirectoryHandle.ErrorInvalidData, wasFirst);
             }
         }
         finally

@@ -21,6 +21,14 @@ static partial class FsSelfTests
         tests.Add(new("every enumerator reports a directory that may not be read as denied", EnumeratorsReportDenied));
         tests.Add(new("every enumerator shows the reparse attribute of a junction entry", EnumeratorsShowJunctions));
         tests.Add(new("every enumerator walks the standard tree like the oracle, with 1, 3 and 8 workers", EnumeratorsWalkLikeTheOracle));
+        tests.Add(new("ReadResult.FirstQuery defaults to false and the two-argument constructor is unaffected", ReadResultFirstQueryDefaultsToFalse));
+    }
+
+    static void ReadResultFirstQueryDefaultsToFalse()
+    {
+        AssertEqual(false, default(ReadResult).FirstQuery, "a default ReadResult has FirstQuery false");
+        AssertEqual(false, new ReadResult(ReadOutcome.Complete, 0).FirstQuery, "the two-argument constructor defaults FirstQuery to false");
+        AssertEqual(true, new ReadResult(ReadOutcome.Failed, 87, true).FirstQuery, "the three-argument constructor sets it");
     }
 
     static void EnumeratorsListLikeTheFramework()

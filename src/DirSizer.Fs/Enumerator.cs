@@ -5,7 +5,11 @@
 // NotRead is the default value on purpose: a result that was never filled in must not look like a successful read.
 enum ReadOutcome { NotRead, Complete, Denied, Failed }
 
-readonly record struct ReadResult(ReadOutcome Outcome, int Error);
+// FirstQuery is true only when a Failed result came from the very first Query() call BufferedEnumerator.Read()
+// issues for a directory (before any entry from that call could have reached the sink). It says nothing about
+// *why* the query failed — that is for the caller (see FallbackEnumerator) to decide. Meaningless (always
+// false) for an enumerator with no such internal query structure, i.e. FindFirstEnumerator.
+readonly record struct ReadResult(ReadOutcome Outcome, int Error, bool FirstQuery = false);
 
 interface IEntrySink
 {
