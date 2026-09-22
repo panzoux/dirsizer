@@ -44,6 +44,50 @@ once a fallback has triggered; per-volume or per-root fallback state (one shared
 "`FallbackState`" below); changing the 10% bar itself; cold-cache measurement, a second machine, ReFS,
 network shares (still unverified, as recorded in design_fs.md's capability matrix).
 
+## User-facing behavior
+
+This section is the CLI contract in one place; "Architecture" below is how it is built, not what it
+promises. Everything here is a restatement of detail specified elsewhere in this document, not new scope.
+
+**`--enumerator` values.** Unchanged from the benchmark branch except for one new value:
+
+```
+--enumerator=find              A, FindFirstFileExW, with LARGE_FETCH
+--enumerator=find:nolarge      A, without LARGE_FETCH
+--enumerator=handle[:class[:KiB]]   B, GetFileInformationByHandleEx (unchanged, no fallback)
+--enumerator=nt[:class[:KiB]]       C, NtQueryDirectoryFileEx (unchanged, no fallback)
+--enumerator=auto               NEW: B (handle:full:64) with a narrow, automatic fallback to A
+```
+
+**What `auto` does.** Tries `handle:full:64` first. If the *very first* directory-listing call for a
+directory fails with `ERROR_INVALID_PARAMETER` (87) — B's information class not supported on this file
+system — every directory read after that point in the scan uses `find` instead, and the directory that
+revealed the problem is itself retried immediately with `find` (it is never counted as a failed directory
+because of this). No other condition triggers it: access denied, a later query failing mid-directory, a
+malformed buffer, or any other error is an ordinary directory failure, exactly as it is for every other
+enumerator, and does not switch anything. `--enumerator=handle...` and `--enumerator=nt...` never fall back
+— the same unsupported-class error there is just `Failed`, as on the benchmark branch today.
+
+**The default, unqualified `dirsizer.exe <path>`.** During this branch's main implementation:
+`dirsizer.exe <path>` behaves exactly as `dirsizer.exe --enumerator=find <path>` (nothing changes here — see
+"Selecting `auto`"). *Only if* the rollout gate later confirms the 10% bar does this change, and the only
+change it makes is: `dirsizer.exe <path>` becomes equivalent to `dirsizer.exe --enumerator=auto <path>`.
+`--enumerator=find` keeps working, unqualified or not, regardless of which outcome ships.
+
+**What the user sees when a fallback happens.** The scan still completes normally: no new exit code exists
+for a fallback by itself (exit codes stay 0 / 1 / 3 with `--strict`, unchanged, and are driven only by
+`directories_failed`/`directories_denied` as before — the directory that triggered the fallback is not one
+of those). With `--json`, `statistics.performance.enumerator_fallback` is `"find"` (else `null`) and
+`enumerator_fallback_reason` describes why (else `null`). Without `--json`, one stderr line, printed once
+after the scan finishes (never mid-scan): `warning: enumerator auto fell back to find: <reason>`. With
+`--benchmark`, the stderr benchmark line's `enumerator=` segment additionally shows `(fallback: find,
+reason=...)` when it happened. If nothing triggers, none of this appears — output is indistinguishable from
+an ordinary `auto` run.
+
+**Not covered here:** the exact `--help`/README wording (written once the rollout gate is resolved, per
+"Selecting `auto`", since it depends on which mode ships as the default) — this section states the behavior
+those docs will describe, not their final phrasing.
+
 ## Architecture
 
 ### `ReadResult.FirstQuery`
