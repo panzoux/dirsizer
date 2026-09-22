@@ -55,10 +55,15 @@ a third, defaulted field:
 readonly record struct ReadResult(ReadOutcome Outcome, int Error, bool FirstQuery = false);
 ```
 
-`FirstQuery` is true only when a `Failed` result came from the *very first* query `BufferedEnumerator.Read()`
-issued for that directory (the Restart-class call), before any entry could have been handed to the sink. It
-is a plain fact about *when* the failure happened, not a judgement about *why*; `BufferedEnumerator` does not
-interpret the error code. Existing two-argument call sites (`new ReadResult(ReadOutcome.Complete, 0)` etc.)
+`FirstQuery` is true when the failure occurred during the *first* `Query()` call `BufferedEnumerator.Read()`
+issues for that directory (the Restart-class call) — a statement about query ordinal only. It does **not**
+assert that the sink received zero entries: a first-query failure can also come from `Parse()` rejecting a
+malformed buffer *after* `Query()` itself succeeded (`bytes > 0` but `Parse` returns false), by which point
+some entries from that same first query may already have reached the sink. This does not affect the
+fallback: it only ever reacts to `FirstQuery && Error == 87`, and error 87 is always a `Query()`-level
+failure (never a `Parse()` one), so by the time the fallback wrapper sees `FirstQuery=true` with that
+specific error, nothing has been sunk yet for that directory. `BufferedEnumerator` does not interpret the
+error code itself. Existing two-argument call sites (`new ReadResult(ReadOutcome.Complete, 0)` etc.)
 are unaffected — a trailing parameter with a default value may still be omitted in a positional record
 constructor call. `FindFirstEnumerator` (A) never sets it (default `false`): its own "no entries at all" case
 is already `Complete`, not `Failed`, so the field is meaningless there.
@@ -225,9 +230,11 @@ explicitly selectable, e.g. for `Compare-Enumerators.ps1` and the self-tests. `C
 for `EnumeratorKind.Auto`. `CreateFactory` returns `new AutoFactory()` for `EnumeratorKind.Auto`.
 
 Every other spelling (`find...`, `find:nolarge`, `handle...`, `nt...`) is unaffected and keeps meaning
-exactly what it says: **no wrapper, no shared state, a real failure is `Failed`.** This is what "explicit
-selection never falls back" means concretely — `--enumerator=handle:full:64` on an unsupported file system
-still fails the directory and is counted, exactly as it does on `feature/fs-enumerator-benchmark` today.
+exactly what it says: **no `FallbackEnumerator` wrapper, no `FallbackState`, a real failure is `Failed`**
+(`find` still has its own, unrelated `LargeFetchState` — "no shared state" would overstate this). This is
+what "explicit selection never falls back" means concretely — `--enumerator=handle:full:64` on an
+unsupported file system still fails the directory and is counted, exactly as it does on
+`feature/fs-enumerator-benchmark` today.
 
 `EnumeratorSpec.CreateFactory(FindFirstFn? findFirst = null)`'s injection parameter exists for self-tests
 that need a fake find-first delegate under the plain `find` spec; `AutoFactory`'s internal
@@ -300,13 +307,16 @@ without touching real Win32/ntdll calls. Cases to cover:
 7. **`AutoFactory` wiring** (the real production class, not a fake — this is the one thing the fakes above
    cannot prove): give `AutoFactory` an `internal` accessor to its `FallbackState`
    (`internal FallbackState TestOnlyState => _state;` — self-tests live in the same assembly, so `internal`
-   is enough, no public surface added). A test manually calls `TestOnlyState.TryTrigger(87)` on one
-   `AutoFactory` instance, then calls `Create()` and `Read()` on a real, existing directory (the standard
-   `TempTree` fixture): the result must match a plain `find` read of the same directory exactly (proving the
-   secondary really is `find`), even though the real B path (`GetFileInformationByHandleEx`) is never
-   exercised by this test — B itself is already proven correct by the benchmark branch's own conformance
-   tests, so this test's only job is the wiring (primary is a `handle:full:64` factory, secondary is a
-   `find` factory, both `Create()` calls share the one `FallbackState`), not B's behaviour again.
+   is enough, no public surface added). A test creates **two** `IDirectoryEnumerator` instances from one
+   `AutoFactory` (`var e1 = factory.Create(); var e2 = factory.Create();`, simulating two workers), *then*
+   calls `factory.TestOnlyState.TryTrigger(87)`, *then* reads a real, existing directory (the standard
+   `TempTree` fixture) with both `e1` and `e2`: both results must match a plain `find` read of the same
+   directory exactly. Because the two enumerator instances were created *before* the state was triggered and
+   still both observe it, this proves they were handed the *same* `FallbackState` instance (two separate,
+   unshared states would leave both untriggered) and that the secondary really is `find`, without needing to
+   re-verify B itself (already proven correct by the benchmark branch's own conformance tests) or add any
+   further test-only surface to assert the primary's identity — the constructor already states it, in code
+   that does not change based on runtime conditions.
 
 **Real-hardware smoke check** (manual, via `Compare-Enumerators.ps1`, part of the implementation plan, not
 a self-test): `--enumerator=auto` against exFAT `D:\` (where `handle:full` already works — no trigger
@@ -317,13 +327,25 @@ expected to trigger it; the mechanism is exercised for real only by the fakes ab
 
 ## Rollout gate: does the shipped default actually change?
 
-After the mechanism is implemented, tested, and committed: re-run `Compare-Enumerators.ps1 -Time` for
-`find`, `handle:full:64` (the variant `auto`'s primary uses) **and `auto` itself** on W1 (`C:\`, workers=8),
-with **more rounds than the original 5** (implementer's judgement, at least 10, spread if practical rather
-than all back-to-back) to address the methodology critique above. `auto` is included in this run only to
-confirm the wrapper's overhead is negligible (its `state.Triggered` check on every call is expected to cost
-nothing measurable): the pass/fail decision itself is made on `handle:full:64` alone, exactly as the frozen
-baseline's adoption rule already does, not on `auto`'s number.
+After the mechanism is implemented, tested, and committed, re-run the measurement with a fixed, reproducible
+procedure (this is deliberately more prescriptive than "implementer's judgement", to address the methodology
+critique above rather than just gesture at it):
+
+- Same workload (W1, real `C:\`), same worker count (8), same build (the NativeAOT `dirsizer.exe`, matching
+  how the original finalists were measured).
+- One untimed warm-up pass first (one full scan, result discarded, to bring the volume's metadata into cache
+  before any timed round — the original run had no explicit warm-up; this run does).
+- **10 timed rounds minimum**, alternating `find`, `handle:full:64` and `auto` with the order rotated each
+  round (the same alternation `Compare-Enumerators.ps1 -Time` already does for however many `-Specs` it is
+  given — pass all three together in one `-Specs` list and one `-Rounds 10` call, not three separate runs,
+  so the alternation is real).
+- Record every individual round's `walk_ms` for all three (`Compare-Enumerators.ps1 -Time`'s own output
+  already lists min/median/max; keep the full table, not just the summary line, in whatever this step writes
+  to `docs/design_fs.md`).
+- The decision uses the median only, exactly as the frozen baseline's adoption rule already does. `auto` is
+  measured in the same run purely to confirm its wrapper overhead is negligible against `handle:full:64`
+  (its `state.Triggered` check on every call is expected to cost nothing measurable) — it does not enter the
+  pass/fail decision itself, which is made on `handle:full:64` vs `find` alone.
 
 **Pass condition, stated exactly** (same "at least 10% lower" wording as `design_fs.md`'s adoption rule,
 made unambiguous): let `mh` = median `walk_ms` of `handle:full:64` and `mf` = median `walk_ms` of `find`
