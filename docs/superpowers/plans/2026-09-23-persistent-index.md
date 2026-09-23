@@ -3005,7 +3005,7 @@ Expected: the table and a final `median total: incremental / full = N%` line. Ke
 
 - [x] **Step 3: Decision gate. Stop and report if the index does not pay for itself**
 
-> Done 2026-09-23: incremental median 4,529 ms = 55 % of full (8,219 ms), so the gate is not met. The largest phases are save_ms 1,914 and load_ms 1,473 (recompute_ms 483). Stopped before I4 and reported to the user.
+> Done 2026-09-23: incremental median 4,529 ms = 55 % of full (8,219 ms), so the gate is not met. The largest phases are save_ms 1,914 and load_ms 1,473 (recompute_ms 483). Stopped before I4 and reported to the user. The user chose "write only the changed part": an incremental run now saves a delta file (commit "save only a delta after an incremental run"); C: incremental 2,630 ms = 31 % of full (8,418 ms), so the gate is met.
 
 If the incremental median total is **50 % or more** of the full median, stop before Phase I4. Report the table to the
 user with the dominant incremental phase (`load_ms`, `recompute_ms` or `save_ms`), and ask how to proceed. Likely
