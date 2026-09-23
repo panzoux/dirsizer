@@ -101,8 +101,8 @@ Specified in [design_fs.md](design_fs.md). Independent of `DirSizer.Core`; none 
 
 Current product state: `dirsizer-fsctl` is the conservative reference, `dirsizer-bulk` is a separate, experimental tool, and there is no automatic fallback between them (and no combined tool that tries bulk and falls back to fsctl). Bulk should become a default candidate only after all of these:
 
-- [ ] Correctness on another NTFS volume (different size, cluster size, or MFT record size) with the same reader-vs-reader comparison.
-- [ ] Correctness with a strongly fragmented MFT (several extents, so the multi-extent and multi-call `ERROR_MORE_DATA` paths run on real data, not only on a small extent map).
+- [x] Correctness on another NTFS volume (different size, cluster size, or MFT record size) with the same reader-vs-reader comparison. U: (VHDX, 2 GiB, 64 KiB clusters, 4 KiB MFT records, `New-TestVolume.ps1`, `New-AbFixture.ps1`; `compact /c` does not compress with 64 KiB clusters, so U: has no compressed file): `Compare-Readers.ps1` EQUAL; `DirSizer.Compare` 0 mismatches over 256 slots (84 in-use records, 15 extension records).
+- [x] Correctness with a strongly fragmented MFT (several extents, so the multi-extent and multi-call `ERROR_MORE_DATA` paths run on real data, not only on a small extent map). V: (VHDX, 2 GiB, 4 KiB clusters, 1 KiB records, `New-FragmentedMft.ps1`, `New-AbFixture.ps1`): 28 MFT extents, 100,608 slots; `Compare-Readers.ps1` EQUAL in 3 runs; `DirSizer.Compare` 0 mismatches over 100,520 in-use records; the extent map read with 32/48/64/100-byte buffers took 28/14/10/6 calls with 27/13/9/5 `ERROR_MORE_DATA` responses and was equal to the normal read.
 - [ ] Failure paths that could not be executed here: a failing raw read, a corrupt extent map on a real volume.
 - [ ] Performance re-measured on more than one machine, and with a cold file cache.
 
@@ -129,7 +129,7 @@ now
 
 Do not change the design here; finish what is open. MFT direct scan, whole-volume file/folder aggregation, and the FSCTL cross-check are done (P0-P4); `dirsizer.exe` already picks MFT, FSCTL, or a directory walk automatically. Remaining:
 
-- [ ] Correctness and stability on a large MFT and on another volume (see "Promotion criteria" above).
+- [x] Correctness and stability on a fragmented MFT (28 extents) and on another volume (see "Promotion criteria" above). A VHDX cannot hold a larger MFT than `C:` has.
 - [ ] Performance with a cold file cache and on a second machine (P3, P5).
 
 Deliverable: a fast, correct one-shot NTFS size analyzer.
