@@ -12,7 +12,7 @@
 param(
     [string]$Volume = 'T:',
     [string]$FsctlPath = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll'),
-    [string]$BulkPath = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll'),
+    [string]$BulkPath = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll'),
     [string]$OutDirectory = ([IO.Path]::GetTempPath())
 )
 $ErrorActionPreference = 'Stop'

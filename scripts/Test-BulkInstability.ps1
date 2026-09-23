@@ -26,7 +26,7 @@
 [CmdletBinding()]
 param(
     [string]$Volume = 'T:',
-    [string]$BulkDll = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\testhooks_win-x64\dirsizer-bulk.dll'),
+    [string]$BulkDll = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\testhooks_win-x64\dirsizer-mft.dll'),
     [int]$MaxFilesPerRound = 12000,
     [switch]$AllowAnyLabel
 )
