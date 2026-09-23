@@ -1,0 +1,99 @@
+// dirsizer-index's own tests. Record-level tests use synthetic records (RecordFixture, shared with the P0 self-tests);
+// the path tests use a temporary directory; nothing here opens a volume, so --self-test needs no elevation to pass.
+readonly record struct IndexSelfTest(string Name, Action Body);
+
+static partial class IndexSelfTests
+{
+    // Returns the process exit code: 0 if no test failed.
+    public static int Run()
+    {
+        var tests = new List<IndexSelfTest>
+        {
+            new("options: defaults, flags, a bare drive letter becomes its root", OptionsDefaultsAndFlags),
+            new("options: bad input is rejected", OptionsRejectBadInput),
+            new("index file: records, names and header survive a round trip, in order", IndexFileRoundTripsRecordsInOrder),
+            new("index file: a loaded index aggregates exactly like the scan that wrote it", LoadedIndexAggregatesLikeTheScan),
+            new("index: Recompute can run twice", RecomputeCanRunTwice),
+            new("index file: damage, truncation and a newer version are rejected", DamagedIndexFileIsRejected),
+            new("index file: saving replaces the file and leaves no temporary file", SaveReplacesTheFileAtomically),
+            new("index file: TryLoad says why nothing was loaded", TryLoadExplainsWhy),
+        };
+
+        var failed = 0;
+        foreach (var test in tests)
+        {
+            try
+            {
+                test.Body();
+                Console.WriteLine($"ok    {test.Name}");
+            }
+            catch (Exception exception)
+            {
+                failed++;
+                Console.WriteLine($"FAIL  {test.Name}: {exception.Message}");
+            }
+        }
+        Console.WriteLine(failed == 0 ? $"{tests.Count} self-tests passed, 0 skipped." : $"{failed} of {tests.Count} self-tests FAILED.");
+        return failed == 0 ? 0 : 1;
+    }
+
+    static void Assert(bool condition, string message)
+    {
+        if (!condition) throw new Exception(message);
+    }
+
+    static void AssertEqual<T>(T expected, T actual, string what)
+    {
+        if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new Exception($"{what}: expected {expected}, got {actual}");
+    }
+
+    static void AssertThrows<TException>(Action action, string what) where TException : Exception
+    {
+        try { action(); }
+        catch (TException) { return; }
+        throw new Exception($"{what}: expected {typeof(TException).Name}, nothing was thrown");
+    }
+
+    static void AssertThrowsWithMessage<TException>(Action action, string fragment, string what) where TException : Exception
+    {
+        try { action(); }
+        catch (TException exception)
+        {
+            if (!exception.Message.Contains(fragment, StringComparison.OrdinalIgnoreCase))
+                throw new Exception($"{what}: the message \"{exception.Message}\" does not mention \"{fragment}\"");
+            return;
+        }
+        throw new Exception($"{what}: expected {typeof(TException).Name}, nothing was thrown");
+    }
+
+    static void AssertContains(string? text, string fragment, string what)
+    {
+        if (text is null || !text.Contains(fragment, StringComparison.OrdinalIgnoreCase)) throw new Exception($"{what}: expected text containing \"{fragment}\", got \"{text}\"");
+    }
+
+    static void OptionsDefaultsAndFlags()
+    {
+        var defaults = IndexOptions.Parse(["C:"]);
+        AssertEqual("C:\\", defaults.Target, "a bare drive letter becomes its root");
+        AssertEqual(25, defaults.Top, "default top");
+        Assert(!defaults.Files && !defaults.Json && !defaults.Benchmark && !defaults.NoSave && !defaults.Verify, "default flags");
+        AssertEqual(IndexFile.DefaultDirectory, defaults.IndexDirectory, "default index directory");
+        Assert(defaults.IndexDirectory.EndsWith("dirsizer\\index", StringComparison.OrdinalIgnoreCase), $"under LOCALAPPDATA: {defaults.IndexDirectory}");
+
+        var all = IndexOptions.Parse(["D:\\", "--top=7", "--files", "--json", "--benchmark", "--verify", "--index-dir=X:\\idx"]);
+        AssertEqual(7, all.Top, "--top=N");
+        Assert(all.Files && all.Json && all.Benchmark && all.Verify, "flags");
+        AssertEqual("X:\\idx", all.IndexDirectory, "--index-dir");
+        Assert(IndexOptions.Parse(["D:\\", "--no-save"]).NoSave, "--no-save");
+    }
+
+    static void OptionsRejectBadInput()
+    {
+        AssertThrows<ArgumentException>(() => IndexOptions.Parse([]), "no path");
+        AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "D:\\"]), "two paths");
+        AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--strategy=mft"]), "an unknown option");
+        AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--top=x"]), "--top without a number");
+        AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--index-dir"]), "--index-dir without a directory");
+        AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--verify", "--no-save"]), "--verify needs the saved index");
+    }
+}

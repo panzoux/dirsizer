@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- dirsizer-index.exe: EXPERIMENTAL. A per-volume index built from the $MFT, kept up to date from the USN journal,
+       answering size queries for any directory. See docs\design_index.md and docs\roadmap.md (I2-I5). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AssemblyName>dirsizer-index</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DebugType>none</DebugType>
+    <StripSymbols>true</StripSymbols>
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <ApplicationManifest>..\Shared\app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DirSizer.Core\DirSizer.Core.csproj" />
+    <Compile Include="..\Shared\ConsolePause.cs" />
+    <Compile Include="..\Shared\Cli.cs" />
+    <Compile Include="..\Shared\DriveRoot.cs" />
+    <Compile Include="..\Shared\SelfTests.cs" />
+    <Compile Include="..\Shared\FsctlScanner.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReader.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkStability.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkScanner.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReport.cs" />
+    <Compile Include="..\DirSizer.Bulk\BulkIntegration.cs" />
+    <Compile Include="..\DirSizer.Inspect\RunList.cs" />
+  </ItemGroup>
+</Project>
