@@ -8,6 +8,22 @@ static partial class FsSelfTests
         tests.Add(new("text output has the tables and the summary", TextOutput));
         tests.Add(new("JSON output has the documented fields", JsonOutput));
         tests.Add(new("unreadable directories give a warning, the counters and the error samples", UnreadableDirectoriesAreReported));
+        tests.Add(new("JSON reports a non-null enumerator_fallback when one happened", JsonReportsTriggeredFallback));
+    }
+
+    static void JsonReportsTriggeredFallback()
+    {
+        var m = SyntheticResult(0, 0, []).Metrics with { Enumerator = "auto", EnumeratorFallback = "find", EnumeratorFallbackReason = "handle:full:64 not supported here: The parameter is incorrect. (error 87)" };
+        var result = SyntheticResult(0, 0, []) with { Metrics = m };
+        var text = new StringWriter();
+        var error = new StringWriter();
+        FsOutput.Write(result, FsOptions.Parse([@"C:\r", "--json"]), text, error);
+        using var document = JsonDocument.Parse(text.ToString());
+        var performance = document.RootElement.GetProperty("statistics").GetProperty("performance");
+        AssertEqual("auto", performance.GetProperty("enumerator").GetString(), "enumerator");
+        AssertEqual("find", performance.GetProperty("enumerator_fallback").GetString(), "enumerator_fallback");
+        Assert(performance.GetProperty("enumerator_fallback_reason").GetString()!.Contains("87"), "enumerator_fallback_reason");
+        Assert(error.ToString().Contains("warning: enumerator auto fell back to find:"), "the stderr warning names both the requested and the fallback enumerator");
     }
 
     // A result made by hand, so the reporting of denied and failed directories is tested without a file system.
@@ -15,7 +31,7 @@ static partial class FsSelfTests
     {
         var zero = TimeSpan.Zero;
         var counters = new FsCounters(5, denied, failed, 1, 8, 20, 1234);
-        var metrics = new FsMetrics(zero, TimeSpan.FromSeconds(1), zero, zero, TimeSpan.FromSeconds(1), zero, zero, 4, true, 0, 30, 8, 1234, 0, 0);
+        var metrics = new FsMetrics(zero, TimeSpan.FromSeconds(1), zero, zero, TimeSpan.FromSeconds(1), zero, zero, 4, true, "find", null, null, 0, 30, 8, 1234, 0, 0);
         return new FsResult(@"C:\r", new ResultItem(@"C:\r", 1234), [], [new ResultItem(@"C:\r", 1234)], [], counters, metrics, samples, [new DirNode(0, -1, @"C:\r")]);
     }
 
@@ -88,7 +104,7 @@ static partial class FsSelfTests
         Assert(output.Contains($"bytes={result.Root.Size}"), "summary shows the byte total");
         Assert(output.Contains("directories_denied=0 directories_failed=0"), "summary shows the error counters");
         Assert(output.Contains("7,011"), "sizes are grouped");
-        Assert(error.ToString().Contains("benchmark: workers=2"), "--benchmark prints the timings to stderr");
+        Assert(error.ToString().Contains("benchmark: workers=2, enumerator=find, large_fetch=on"), "--benchmark prints the enumerator and the timings to stderr");
         Assert(!error.ToString().Contains("warning"), "no warning when every directory was read");
 
         var plain = new StringWriter();
@@ -120,8 +136,10 @@ static partial class FsSelfTests
         foreach (var name in new[] { "directories_scanned", "directories_denied", "directories_failed", "reparse_skipped", "files", "error_samples" })
             Assert(statistics.TryGetProperty(name, out _), $"statistics.{name} is present");
         var performance = statistics.GetProperty("performance");
-        foreach (var name in new[] { "open_ms", "walk_ms", "aggregation_ms", "finalize_ms", "other_ms", "total_ms", "phase_sum_ms", "enum_ms_total", "idle_ms_total", "workers", "large_fetch", "peak_queued_dirs", "managed_allocated_bytes", "peak_working_set_bytes", "entries_per_sec", "directories_per_sec", "logical_mib_per_sec" })
+        foreach (var name in new[] { "open_ms", "walk_ms", "aggregation_ms", "finalize_ms", "other_ms", "total_ms", "phase_sum_ms", "enum_ms_total", "idle_ms_total", "workers", "large_fetch", "enumerator", "enumerator_fallback", "enumerator_fallback_reason", "peak_queued_dirs", "managed_allocated_bytes", "peak_working_set_bytes", "entries_per_sec", "directories_per_sec", "logical_mib_per_sec" })
             Assert(performance.TryGetProperty(name, out _), $"performance.{name} is present");
+        AssertEqual(JsonValueKind.Null, performance.GetProperty("enumerator_fallback").ValueKind, "enumerator_fallback is null when nothing fell back");
+        AssertEqual(JsonValueKind.Null, performance.GetProperty("enumerator_fallback_reason").ValueKind, "enumerator_fallback_reason is null when nothing fell back");
         AssertEqual(2, performance.GetProperty("workers").GetInt32(), "performance.workers");
         Assert(performance.GetProperty("large_fetch").ValueKind is JsonValueKind.True or JsonValueKind.False, "performance.large_fetch is a JSON boolean");
         Assert(performance.GetProperty("total_ms").ValueKind == JsonValueKind.Number, "timings are JSON numbers");

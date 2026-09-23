@@ -12,7 +12,8 @@ sealed record FsCounters(long DirectoriesScanned, long DirectoriesDenied, long D
 // all workers while they run in parallel inside `walk`, so they are diagnostics and not phases.
 sealed record FsMetrics(
     TimeSpan Open, TimeSpan Walk, TimeSpan Aggregation, TimeSpan Finalize, TimeSpan Total,
-    TimeSpan EnumTotal, TimeSpan IdleTotal, int Workers, bool LargeFetch, int PeakQueuedDirs,
+    TimeSpan EnumTotal, TimeSpan IdleTotal, int Workers, bool LargeFetch, string Enumerator,
+    string? EnumeratorFallback, string? EnumeratorFallbackReason, int PeakQueuedDirs,
     long Entries, long Directories, long Bytes, long ManagedAllocatedBytes, long PeakWorkingSetBytes)
 {
     public TimeSpan Other => TimeSpan.FromTicks(Math.Max(0, Total.Ticks - Open.Ticks - Walk.Ticks - Aggregation.Ticks - Finalize.Ticks));
@@ -33,7 +34,7 @@ sealed record FsResult(
     string[] ErrorSamples,
     DirNode[] Nodes);
 
-sealed record ScanSettings(int Workers, int Top, bool CollectFiles, bool ShowProgress, CancellationToken Cancel = default, FindFirstFn? FindFirst = null);
+sealed record ScanSettings(int Workers, int Top, bool CollectFiles, bool ShowProgress, CancellationToken Cancel = default, IEnumeratorFactory? Enumerators = null);
 
 readonly record struct RootChild(DirNode? Directory, FileHit File);
 
@@ -58,7 +59,7 @@ static class FsScanner
         WalkResult walk;
         try
         {
-            walk = new Walker(settings.FindFirst).Run(root, rootPath.Extended, settings.Workers, settings.Top, settings.CollectFiles, settings.Cancel, progress);
+            walk = new Walker(settings.Enumerators).Run(root, rootPath.Extended, settings.Workers, settings.Top, settings.CollectFiles, settings.Cancel, progress);
         }
         finally
         {
@@ -108,7 +109,7 @@ static class FsScanner
             open, walk.WalkTime, aggregation, finalize, total.Elapsed,
             TimeSpan.FromSeconds((double)totals.EnumTicks / Stopwatch.Frequency),
             TimeSpan.FromSeconds((double)totals.IdleTicks / Stopwatch.Frequency),
-            settings.Workers, walk.LargeFetch, walk.PeakQueuedDirs,
+            settings.Workers, walk.LargeFetch, walk.Enumerator, walk.EnumeratorFallback, walk.EnumeratorFallbackReason, walk.PeakQueuedDirs,
             totals.Entries, nodes.Length, totals.Bytes,
             GC.GetTotalAllocatedBytes() - allocatedAtStart, process.PeakWorkingSet64);
         return new FsResult(rootPath.Display, new ResultItem(rootPath.Display, nodes[0].Total), rootChildren.ToArray(), directories.ToArray(), files.ToArray(), counters, metrics, walk.ErrorSamples, nodes);

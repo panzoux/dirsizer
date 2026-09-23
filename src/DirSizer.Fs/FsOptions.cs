@@ -10,6 +10,7 @@ sealed class FsOptions
     public bool Benchmark { get; private set; }
     public bool Strict { get; private set; }
     public int Workers { get; private set; }    // 0 = automatic
+    public EnumeratorSpec Enumerator { get; private set; } = EnumeratorSpec.Default;
 
     public static int DefaultWorkers => Math.Min(Environment.ProcessorCount, 8);
 
@@ -32,6 +33,9 @@ sealed class FsOptions
             if (arg.StartsWith("--workers=", StringComparison.Ordinal) && int.TryParse(arg[10..], out var workers)) { result.Workers = CheckWorkers(workers); continue; }
             if (arg == "--workers" && index + 1 < args.Length && int.TryParse(args[++index], out workers)) { result.Workers = CheckWorkers(workers); continue; }
             if (arg.StartsWith("--workers", StringComparison.Ordinal)) throw new ArgumentException("--workers needs a whole number from 1 to 256: --workers=N or --workers N.");
+            if (arg.StartsWith("--enumerator=", StringComparison.Ordinal)) { result.Enumerator = EnumeratorSpec.Parse(arg[13..]); continue; }
+            if (arg == "--enumerator" && index + 1 < args.Length) { result.Enumerator = EnumeratorSpec.Parse(args[++index]); continue; }
+            if (arg.StartsWith("--enumerator", StringComparison.Ordinal)) throw new ArgumentException("--enumerator needs a value: --enumerator=NAME or --enumerator NAME.");
             if (arg.StartsWith('-')) throw new ArgumentException($"Unknown option: {arg}");
             if (result.Root.Length != 0) throw new ArgumentException("Only one path is supported.");
             result.Root = arg;
@@ -57,6 +61,11 @@ sealed class FsOptions
             --json      Write machine-readable JSON to stdout
             --workers N Directories are read by N threads in parallel (default: {DefaultWorkers}; 1-256)
             --strict    Exit with code 3 if a directory could not be read (result is still written)
+            --enumerator=NAME[:CLASS[:KiB]]
+                        Advanced, for comparisons: how directories are read. find (default),
+                        find:nolarge, handle[:full|idextd[:KiB]], nt[:dir|full|idextd[:KiB]]
+                        (idextd is not supported on exFAT), or auto (handle:full:64, falling
+                        back to find if that class is not supported here)
             --benchmark Print phase timings and memory measurements to stderr
             --self-test Run the built-in tests (uses a temporary folder)
             -h          Show this help

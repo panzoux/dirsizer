@@ -40,8 +40,9 @@ JSON output.
 
 Out of scope for this version: `--elevate`, `--unique-files` (deduplication by file ID),
 allocated/physical size, alternate data stream reporting, following reparse points, automatic
-worker-count selection by device type, and the alternative enumeration APIs
-(`GetFileInformationByHandleEx`, `NtQueryDirectoryFileEx`; see "Later phase").
+worker-count selection by device type. (The alternative enumeration APIs
+`GetFileInformationByHandleEx` and `NtQueryDirectoryFileEx` were out of scope of the first version;
+they are compared in "Enumerator comparison (P4)".)
 
 ## Measurement semantics
 
@@ -75,8 +76,8 @@ FIND_FIRST_EX_LARGE_FETCH)`, then `FindNextFileW` until `ERROR_NO_MORE_FILES`, t
   is an ordinary failure (`directories_failed`), not a reason to retry.
 - The "find first" call sits behind a single delegate (a parameter of the walker, defaulting to the
   real `FindFirstFileExW` call) so that the self-test can inject failures and observe the flags of
-  every call. This is a test seam for one call, not an enumerator abstraction (that waits for a
-  second real implementation; see "Later phase").
+  every call. This is a test seam for one call, not an enumerator abstraction (the abstraction was
+  introduced when a second implementation was added; see "Enumerator comparison (P4)").
 - Entries `.` and `..` are skipped. No file or directory handle is opened for any entry. The number
   of open calls is one `FindFirstFileExW` per directory, never per file.
 - Paths use the extended-length form (`\\?\C:\...`, `\\?\UNC\server\share\...`), built from
@@ -361,9 +362,310 @@ Implemented as `src\DirSizer.Fs`; see P5 in [roadmap.md](roadmap.md) for what wa
    no-elevation note), a pointer from `design.md` and `design_mft.md`, which describe the NTFS tools.
 5. The version bump happens at release time, not as part of this work.
 
-## Later phase (not part of this work)
+## Enumerator comparison (P4)
 
-Benchmark three enumerators on the same fixture and filesystems: A `FindFirstFileExW` (this work),
-B `GetFileInformationByHandleEx` with `FileIdExtdDirectoryInfo`, C `NtQueryDirectoryFileEx`. Adopt
-only what measures faster on the same workload. "Lower level, therefore faster" is a hypothesis, not a
-fact. An enumerator abstraction is introduced then, when there is a second implementation.
+Everything above describes the first version, whose only enumerator is `FindFirstFileExW`. This
+section specifies the next piece of work, done on its own branch: put the enumeration behind a small
+contract, add two alternative enumerators, and compare the three on the same workloads. "Lower level,
+therefore faster" is a hypothesis, not a fact; only measurements decide.
+
+### The three enumerators and their standing
+
+| | Name | API | Standing |
+| --- | --- | --- | --- |
+| A | `find` | `FindFirstFileExW` / `FindNextFileW` | **production baseline**: the behaviour of the first version, unchanged |
+| B | `handle` | `CreateFileW` on the directory, then `GetFileInformationByHandleEx` | Win32 alternative (needs Windows 8 or later for the classes used) |
+| C | `nt` | `CreateFileW` on the directory, then `NtQueryDirectoryFileEx` from `ntdll.dll` | **native / experimental** alternative: a documented WDK Native System Service (Windows 10 version 1709 or later), not a Win32 API |
+
+C is never promoted to the default on speed alone. Even if it wins, whether it becomes the default
+and whether it stays only as an experimental option are two separate decisions; a capability matrix
+records the standing of each enumerator per filesystem.
+
+### The contract
+
+```text
+IEntrySink.OnEntry(uint attributes, long size, ReadOnlySpan<char> name)
+IDirectoryEnumerator.Read(string directoryPath, IEntrySink sink) -> ReadResult
+```
+
+- The sink sees only what the walker needs: the file attributes (the walker looks at
+  `FILE_ATTRIBUTE_DIRECTORY` and `FILE_ATTRIBUTE_REPARSE_POINT`; it never needs the reparse tag), the
+  logical size (end of file) and the name. Everything an API can additionally return (reparse tag,
+  file id, allocation size, times, short name) stays inside the enumerator and is not passed on.
+- `.` and `..` are skipped by the enumerator, never passed to the sink.
+- `ReadResult` and `ReadOutcome` (`NotRead`, `Complete`, `Denied`, `Failed`, with the error code) are
+  unchanged, and so are the rules of the "Errors" section, except where "Handle-based enumerators"
+  below says otherwise.
+- One enumerator instance belongs to one worker and owns that worker's buffers, so nothing is
+  allocated per directory or per entry. State that all workers share (the `LARGE_FETCH` switch of
+  `find`) lives in a shared object handed to every instance. The walker receives a factory. Each
+  enumerator has a canonical name (for example `find`, `handle:idextd:64`) that is reported in the
+  benchmark line and in `performance.enumerator` of the JSON output; for `find` the report also says
+  whether `LARGE_FETCH` is on.
+- The test seam of `find` (the injectable find-first delegate) stays inside `find`.
+
+**Step 1 changes no behaviour.** The existing `DirectoryReader` becomes the `find` enumerator behind
+the contract; the walker, the tests and the output are adapted to the neutral sink. Acceptance: the
+JSON output of the new build on fixed quiescent trees (`T:\`, `C:\Program Files\dotnet`, with a large
+`--top`), with the timing and memory fields removed, is identical to that of the build before the
+change, and every existing self-test still passes.
+
+### Handle-based enumerators (B and C)
+
+- **Opening.** One `CreateFileW` per directory, on the extended-length path, with `FILE_LIST_DIRECTORY`,
+  `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`, `OPEN_EXISTING` and
+  `FILE_FLAG_BACKUP_SEMANTICS`, and `CloseHandle` when the directory is done. No file is ever opened;
+  the principle "no per-file open" holds, but there is now one more open per directory than with `find`,
+  which is exactly what the workloads below are chosen to expose.
+- **Errors at the open.** `ERROR_ACCESS_DENIED` is `Denied`. Any other error, **including
+  `ERROR_FILE_NOT_FOUND` and `ERROR_PATH_NOT_FOUND`, is `Failed`**: for `find`, `ERROR_FILE_NOT_FOUND`
+  means "no entries" (an empty FAT/exFAT root), but here it would mean that the directory does not
+  exist. An empty directory is an open that succeeds followed by an immediate end of enumeration:
+  `STATUS_NO_MORE_FILES` or, when the very first query finds no entry at all, `STATUS_NO_SUCH_FILE`
+  (B sees it as `ERROR_FILE_NOT_FOUND`); on the first query both mean `Complete`. An empty directory
+  on the exFAT volume `D:` was scanned and gave `Complete` for all three enumerators, so the second
+  form was not observed there; it is handled because the native API documents it.
+- **Buffer.** One per-worker `byte[]` (default 64 KiB, configurable, at least 4 KiB). Each query asks
+  for as many entries as fit in the buffer. Entries are read by following `NextEntryOffset` (0 marks
+  the last one), and the name is `FileNameLength` bytes of UTF-16 at the end of the entry.
+- **Entry layouts** (same for the Win32 and the native structures): all three used classes start with
+  `NextEntryOffset` (0), `FileIndex` (4), four times (8-39), `EndOfFile` (40), `AllocationSize` (48),
+  `FileAttributes` (56) and `FileNameLength` (60). The name starts at offset 64 for `FileDirectoryInformation`,
+  at 68 for `FileFullDirectoryInformation` (an `EaSize` at 64), and at 88 for
+  `FileIdExtdDirectoryInformation` (`EaSize` at 64, `ReparsePointTag` at 68, a 128-bit `FileId` at 72).
+  The conformance tests are what proves these offsets.
+- Both APIs return data from the same directory index as `FindNextFileW`, so identical sizes and
+  attributes are expected; the tests and the comparison scripts verify that instead of assuming it.
+
+### B: `GetFileInformationByHandleEx`
+
+A state machine of two classes per variant: the first call of a directory uses the **Restart** class,
+every later call the plain class, until the call fails with `ERROR_NO_MORE_FILES`.
+
+| Variant | First call | Later calls |
+| --- | --- | --- |
+| `idextd` | `FileIdExtdDirectoryRestartInfo` | `FileIdExtdDirectoryInfo` |
+| `full` | `FileFullDirectoryRestartInfo` | `FileFullDirectoryInfo` |
+
+A class that the filesystem or the Windows version does not support makes the call fail (typically
+`ERROR_INVALID_PARAMETER`); the directory is then `Failed` with that error, and the failure is recorded
+in the capability matrix. There is no automatic fallback while comparing.
+
+### C: `NtQueryDirectoryFileEx`
+
+- The first query of a directory has `QueryFlags = SL_RESTART_SCAN` (0x1); every later query has
+  `QueryFlags = 0`. **`SL_RETURN_SINGLE_ENTRY` (0x2) is never used**: it makes the file system return one
+  entry per query, which is inefficient. Each query asks for as many entries as the buffer holds.
+  `SL_NO_CURSOR_UPDATE_QUERY` is not used either: a handle is used by one worker only. The file name
+  argument is null (all entries).
+- Variants: `dir` = `FileDirectoryInformation` (1), `full` = `FileFullDirectoryInformation` (2),
+  `idextd` = `FileIdExtdDirectoryInformation` (60).
+- The end of a directory is the status `STATUS_NO_MORE_FILES` (0x80000006). **A later query that
+  succeeds but returns no entry (`IoStatusBlock.Information` is 0) means that the buffer is too small,
+  not that the directory is finished**; the directory is `Failed` with `ERROR_INSUFFICIENT_BUFFER`
+  (the buffer floor of 4 KiB makes this impossible for ordinary names). Any other failing NTSTATUS
+  (`STATUS_BUFFER_OVERFLOW` and `STATUS_BUFFER_TOO_SMALL` included) makes the directory `Failed`, with
+  the Win32 error that `RtlNtStatusToDosError` gives for the error code and message.
+- Because C is a native API, it is only ever selected explicitly (`--enumerator=nt...`); a failure of
+  the `ntdll.dll` entry point itself (for example on a Windows before 1709) is reported as an error,
+  not hidden.
+
+### Selecting an enumerator
+
+`--enumerator=<name>[:<class>[:<KiB>]]`, an advanced option for diagnostics and comparison, like
+`--workers`; the default is `find`.
+
+| Value | Meaning |
+| --- | --- |
+| `find` | `FindFirstFileExW` with `LARGE_FETCH` (the default) |
+| `find:nolarge` | the same without `LARGE_FETCH` (a comparison point) |
+| `handle`, `handle:idextd`, `handle:full`, `handle:full:256` | B; classes `full` (default) and `idextd`; default buffer 64 KiB |
+| `nt`, `nt:dir`, `nt:full`, `nt:idextd:256` | C; classes `dir` (default), `full` and `idextd`; default buffer 64 KiB |
+
+The default class is the lightest one that works on every file system that was available (NTFS and
+exFAT): **`idextd` is not supported on exFAT** and fails there with `ERROR_INVALID_PARAMETER`, for B
+and for C alike (measured on `D:`, see the capability matrix in the results).
+
+An unknown name or class, or a buffer below 4 KiB or above 1024 KiB, is an option error (exit 1).
+The canonical form is what is reported (`performance.enumerator`, the `--benchmark` line).
+
+### Correctness
+
+- **Conformance tests, per enumerator** (`find`, `find:nolarge` and a set of B and C variants,
+  including a 4 KiB buffer): the same standard tree as the walk tests, compared with the framework's
+  own enumeration: names, attributes and sizes of every entry (Unicode names, a path over 260
+  characters, hidden and system files, a junction whose entry carries the reparse attribute), an empty
+  directory, a directory that does not exist (`Failed`), a directory that cannot be read (`Denied`,
+  skipped where the shell ignores the deny ACL), and a directory with enough entries to need several
+  buffer refills at the small buffer (the boundary where a parser goes wrong).
+- **The whole walk**, every enumerator with 1, 3 and 8 workers, against the same independent oracle
+  as the walk tests.
+- **Real volumes**, by script (`scripts\Compare-Enumerators.ps1 -Equal`): the same comparison of the
+  canonical snapshots (`scripts\Get-FsSnapshot.ps1`) of A, B and C on `T:\` (NTFS), `D:\` (exFAT), static
+  trees on `C:\` and the two synthetic trees. Everything must be identical, not only the root size: every
+  directory and its size, and the counters. A variant that does not work on a file system is not
+  hidden: it is reported as failed with the error it returned, and goes into the capability matrix.
+
+### Measurement
+
+- The enumerator is the only variable. The workers are **fixed at 8** for the comparison; a worker
+  sweep (1, 2, 4, 8) is done afterwards, for the winner only.
+- Workloads: **W1** the real `C:\` (about 228,000 directories, 786,000 files); **W2** a synthetic tree of
+  many small directories (20,000 directories with 3 files each, 60,000 files); **W3** a synthetic tree of
+  few large directories (10 directories with 20,000 files each, 200,000 files). They separate the cost
+  per directory (one more open for B and C) from the cost per entry. The synthetic trees are created by
+  `scripts\New-EnumFixture.ps1` under `%TEMP%` (deterministic names and sizes) and removed afterwards.
+  W2 and W3 run for tens to hundreds of milliseconds, so their numbers are noisy and only show a
+  direction; W1 decides.
+- Method: warm file cache, the enumerators alternated in each round (the order rotated), the median.
+  **Primary metric: `walk_ms` (wall clock).** Diagnostics reported next to it: `enum_ms_total` (summed
+  worker time, not the elapsed time), `entries_per_sec`, `idle_ms_total`, managed allocation, peak
+  working set. Cold cache is not measured in this work. `C:` is a live volume, so the byte totals of two
+  runs differ slightly; equality is checked on quiescent trees only.
+- Order: **screening** of every variant (A with and without `LARGE_FETCH`; B and C in each class, at 4,
+  64 and 1024 KiB) with 2 rounds; the best variant of A, B and C **and the reference `find`** then get 5
+  rounds on W1, W2 and W3 (the finalists); then the worker sweep (1, 2, 4, 8) for the winner only.
+- Recorded per run: the resolved enumerator, `large_fetch` for `find`, the class and buffer for B and C.
+
+### Adoption rule
+
+An alternative is a **candidate for the default** only if all of this holds:
+
+1. **Correctness:** its output is identical to A's on every volume and fixture above.
+2. **Primary performance:** its median `walk_ms` is at least 10 % lower than A's on W1.
+3. **Diagnostic:** `enum_ms_total` is reported next to it (it explains a difference, it does not decide it).
+
+W2 and W3 are reported, and a candidate that is clearly slower than A on a workload class is
+flagged in the recommendation. B, if it is a candidate, becomes the default only together with a
+defined fallback to A (an unsupported class or a failure at the first directory switches the run to A
+and says so), implemented as the last step. C is never made the default by this rule alone (see
+"Standing"). If nothing qualifies, A stays the default. Either way the full result table and the
+capability matrix (which enumerator worked on NTFS and exFAT here; ReFS and network shares were not
+available and stay unverified) are written to `roadmap.md` and to this file.
+
+### Deliverables of the enumerator work
+
+1. The contract, `find` behind it (Step 1, behaviour unchanged), the snapshot script and its result.
+2. B, then C, each with its conformance and walk tests, and a native-AOT run of the self-tests after the
+   first `ntdll.dll` import.
+3. `--enumerator`, the reporting, `--help` and README text.
+4. `scripts\Compare-Enumerators.ps1` (snapshot equality across enumerators and volumes, and the timed
+   comparison) and `scripts\New-EnumFixture.ps1`.
+5. The results, the adoption decision and the capability matrix.
+
+### Not part of this work
+
+Cold-cache measurement, ReFS and network shares (not available), other operating systems, asynchronous
+or overlapped directory queries, several queries in flight on one handle, and any change to the
+aggregation or the output.
+
+### Results
+
+Measured on 2026-09-21 on the development machine (4 logical processors, Windows 10, `C:` NTFS,
+`T:` NTFS fixture volume, `D:` exFAT), with the NativeAOT `dirsizer.exe`, workers fixed at 8, warm
+cache, enumerators alternated with the order rotated each round. Every table below is the output of
+`scripts\Compare-Enumerators.ps1 -Time`.
+
+**Correctness.** `scripts\Compare-Enumerators.ps1 -Equal` compared the snapshot (every directory and
+its size, the counters) of 12 variants (`find`, `find:nolarge`, `handle` and `nt` in every class at 4 and
+64 KiB) on `T:\`, `C:\Program Files\dotnet` (1,969 directories, 13,939 files), `C:\Windows\System32\drivers`
+and the two synthetic trees: **all identical to `find`**. On `D:\` (exFAT) `find`, `find:nolarge`, `handle:full`,
+`nt:dir` and `nt:full` are identical; the `idextd` variants fail (below). Step 1 (the contract) changed
+nothing: snapshots of three trees are identical before and after.
+
+**Finalists** (5 rounds each; the finalists are the best variant of each family in the screening that works
+on every file system tested, so no `idextd`):
+
+| Workload | Enumerator | `walk_ms` min / median / max | `enum_ms_total` median | entries/s median | median vs `find` |
+| --- | --- | --- | --- | --- | --- |
+| W1 `C:\` | `find` | 19,749 / 20,665 / 20,924 | 149,613 | 62,708 | |
+| | `handle:full:64` (B) | 17,988 / 18,777 / 19,761 | 136,755 | 69,014 | **-9.1 %** |
+| | `nt:dir:64` (C) | 18,206 / 18,551 / 19,226 | 132,302 | 69,853 | **-10.2 %** |
+| W2 20,000 dirs x 3 files | `find` | 1,004 / 1,050 / 1,124 | 8,232 | 76,169 | |
+| | `handle:full:64` | 841 / 954 / 1,030 | 7,497 | 83,835 | -9.1 % |
+| | `nt:dir:64` | 892 / 905 / 1,005 | 7,155 | 88,355 | -13.8 % |
+| W3 10 dirs x 20,000 files | `find` | 32.9 / 40.9 / 59.3 | 107 | 4,888,965 | |
+| | `handle:full:64` | 25.6 / 26.8 / 35.9 | 84 | 7,476,031 | -34.6 % |
+| | `nt:dir:64` | 25.1 / 26.9 / 35.0 | 92 | 7,431,586 | -34.2 % |
+
+**Screening** (2 rounds on W1, 3 rounds on W2 and W3; medians, so on W1 the minimum): on W1, against `find`
+(19,595 ms): `find:nolarge` +5.0 %, `handle:full:64` -6.4 %, `handle:idextd:64` -7.1 %, `nt:dir:64` -7.2 %,
+`nt:full:64` -4.3 %, `nt:idextd:64` -7.1 %, `nt:dir:1024` +2.5 %. A buffer of 64 KiB was the best size on
+W1 and W2 (on W2 `handle:full` -20.2 % at 64 KiB, -6.1 % at 1024 KiB, -3.3 % at 4 KiB); 4 KiB was clearly
+worse (on W3 `nt:dir:4` was 9.1 % slower than `find`), and on W3 `handle:full:1024` (-24.3 %) beat
+`handle:full:64` (-14.1 %). `idextd` gave no measurable gain over the plain classes. `find` without `LARGE_FETCH` was
+10.1 % (W2) to 26.1 % (W3) slower, so the baseline is the tuned one.
+
+**Is `find` slower after the contract?** The pre-contract build and the contract build (both `find`), 7
+rounds on W2 and W3 and 3 on W1, alternating: W2 -3.5 %, W3 -20.0 %, W1 +4.7 % (26.4 s against 25.2 s; the
+volume was slower than in the finalists' run). There is no consistent difference, so the contract did not
+handicap `find`. (The reviewer noted that `find` now looks for the end of every name with `IndexOf`; it is
+nanoseconds against a syscall.)
+
+**Verdict by the adoption rule.**
+
+- **B (`handle:full:64`)**: correct and identical everywhere it works; W1 median **-9.1 %, below the 10 %
+  bar**, so it is **not a candidate for the default**. It is never slower than `find` on W1, W2 or W3, and
+  its gain on many-small-directories (W2 -9.1 %) shows that the extra open per directory costs less than
+  it saves. The W1 ranges overlap (the slowest B run, 19,761 ms, against the fastest `find` run, 19,749 ms).
+- **C (`nt:dir:64`)**: identical where it works; W1 median -10.2 %, which meets the number, but C is native
+  and experimental and **is never made the default by this rule** (see "Standing"). On this machine B and C
+  differ by about 1 % on W1, which is within the run-to-run noise.
+- **Decision: `find` stays the default.** Nothing was changed for B: it misses the bar, and a default change
+  needs the fallback to `find` that is not implemented. If the 10 % bar is judged too strict, the case for
+  B is the consistent -6 % to -9 % on W1 and -9 % and -35 % on W2 and W3; that decision belongs to the
+  owner, and it would be a separate step with the fallback. The worker sweep is not done, because there is
+  no candidate to sweep.
+- The absolute time of `C:` drifts a lot between runs (19.6 s to 26 s here), so only numbers from the same
+  alternating run may be compared with each other.
+
+**Capability matrix** (what worked, measured here):
+
+| Variant | NTFS (`C:`, `T:`) | exFAT (`D:`) | ReFS, network share |
+| --- | --- | --- | --- |
+| `find`, `find:nolarge` | works, identical | works, identical | not available, unverified |
+| `handle:full`, `nt:dir`, `nt:full` (4 to 1024 KiB) | works, identical to `find` | works, identical to `find` | not available, unverified |
+| `handle:idextd`, `nt:idextd` | works, identical to `find` | **fails with error 87** (`ERROR_INVALID_PARAMETER`) | not available, unverified |
+
+**Known differences and limits** (from the review of the code): a directory whose deletion is pending is
+`Denied` for B and C (the open reports access denied) but `Failed` for `find`, so on a live volume the two
+counters can move between runs; the JSON `reader` field still says `win32-find` whatever the enumerator is
+(`performance.enumerator` is the truthful one); B does not know how many bytes it received, so it relies on
+the chain ending with `NextEntryOffset` 0 (the parser is bounds-checked, so a bad chain is an error, not an
+out-of-range read); a share root (`\\server\share`) is opened by B and C without a trailing backslash and was
+not tried.
+
+### Default enumerator with a fallback
+
+Specified in [superpowers/specs/2026-09-22-fs-enumerator-default-design.md](superpowers/specs/2026-09-22-fs-enumerator-default-design.md),
+implemented on branch `feature/fs-enumerator-default`. `--enumerator=auto` (B, `handle:full:64`, falling back
+to A, `find`, only when the very first directory-listing query for a directory fails with
+`ERROR_INVALID_PARAMETER`, i.e. an unsupported information class) is available regardless of the outcome
+below; the fallback is scan-wide and one-way, never re-probes B, and is never triggered by an ordinary
+failure (access denied, a later query failing mid-directory, a malformed buffer). 39 self-tests (JIT and
+NativeAOT), and a real-hardware smoke check (`auto` snapshot-equal to `find` on `T:\`, `C:\Program
+Files\dotnet`, `C:\Windows\System32\drivers` and `D:\` exFAT, with no fallback triggered anywhere in this
+environment — `handle:full:64` already works on every file system tested here).
+
+**Re-measurement** (10 timed rounds, one untimed warm-up pass first, `find`/`handle:full:64`/`auto`
+alternated with the order rotated each round, workers=8, real `C:\`, NativeAOT build):
+
+| Enumerator | `walk_ms` min / median / max | `enum_ms_total` median | entries/s median | median vs `find` |
+| --- | --- | --- | --- | --- |
+| `find` | 17,959.2 / 18,761.7 / 28,989.0 | 139,880.3 | 53,622 | |
+| `handle:full:64` | 16,525.1 / 17,545.8 / 24,016.7 | 131,209.6 | 56,844 | -6.5 % |
+| `auto` (no fallback triggered) | 17,100.7 / 17,292.4 / 22,205.1 | 133,360.1 | 57,119 | -7.8 % |
+
+`mh` (median `handle:full:64`) / `mf` (median `find`) = 17,545.8 / 18,761.7 = **0.9352**. `auto` vs
+`handle:full:64`: -1.4 % (`auto` was marginally *faster* than its own primary in this run, well within
+noise) — confirms the wrapper adds no measurable overhead.
+
+**Decision:** the pass condition (`mh <= 0.90 * mf`) is **not met** (`0.9352 > 0.90`, a 6.5 % reduction
+against the 10 % bar). `EnumeratorSpec.Default` **stays `find`**; no code change was made. This second,
+more-controlled measurement (10 rounds vs the original 5) gives a *smaller* effect size than the frozen
+baseline's -9.1 % (both below the bar), which is consistent with the methodology critique: the original
+-9.1 % was itself likely on the optimistic side of run-to-run noise, not an underestimate. `--enumerator=auto`
+remains available and fully tested for anyone who wants B with a safety net; it is simply not the shipped
+default. No worker sweep was done (nothing qualified). The wide max/min spread in this run (`find`: 17,959 to
+28,989 ms) again confirms `C:\` is a noisy measurement target session to session; only numbers from the same
+alternating run are comparable.

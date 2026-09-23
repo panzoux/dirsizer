@@ -23,8 +23,8 @@ static partial class FsSelfTests
         tests.Add(new("walk leaves no worker running when the caller fails", WalkStopsWorkersWhenTheCallerFails));
     }
 
-    static FsResult Scan(string root, int workers, bool files = false, int top = 25, CancellationToken cancel = default, FindFirstFn? findFirst = null) =>
-        FsScanner.Scan(root, new ScanSettings(workers, top, files, false, cancel, findFirst));
+    static FsResult Scan(string root, int workers, bool files = false, int top = 25, CancellationToken cancel = default, FindFirstFn? findFirst = null, IEnumeratorFactory? enumerators = null) =>
+        FsScanner.Scan(root, new ScanSettings(workers, top, files, false, cancel, findFirst is null ? enumerators : new FindFirstFactory(true, findFirst)));
 
     // Nested and empty directories, a zero-byte file, Unicode names, a path over 260 characters, and files of distinct sizes.
     static TempTree StandardTree()
@@ -350,7 +350,7 @@ static partial class FsSelfTests
         var root = new DirNode(0, -1, tree.Root);
         try
         {
-            new Walker(Slow).Run(root, tree.Base, 2, 5, false, default, (directories, files) => throw new InvalidOperationException("progress failed"));
+            new Walker(new FindFirstFactory(true, Slow)).Run(root, tree.Base, 2, 5, false, default, (directories, files) => throw new InvalidOperationException("progress failed"));
             throw new Exception("the failing progress callback must reach the caller, but nothing was thrown");
         }
         catch (InvalidOperationException exception)
