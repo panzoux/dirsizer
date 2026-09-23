@@ -45,6 +45,10 @@ static partial class IndexSelfTests
             new("index file: a file of several read pieces loads exactly and is checked piece by piece", LargeFileIsReadAndCheckedPieceByPiece),
             new("update: the entries it replaced or removed are recorded", UpdateRecordsWhichEntriesChanged),
             new("path: resolved by Windows to the record; missing, file and other-volume cases are refused", PathResolverFindsTheDirectoryRecord),
+            new("changes: shrunk and grew, largest first, scoped to the queried directory", ChangesShowWhatShrankAndGrew),
+            new("changes: a deleted directory is listed by its old path", ChangesListADeletedDirectoryByItsOldPath),
+            new("changes: a reused record is one directory gone and one new", ChangesTreatAReusedRecordAsGoneAndNew),
+            new("changes: a directory moved into the queried one counts from 0", ChangesCountADirectoryMovedInAsNew),
         };
 
         var failed = 0;
