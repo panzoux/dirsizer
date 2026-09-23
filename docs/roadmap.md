@@ -108,6 +108,104 @@ Current product state: `dirsizer-fsctl` is the conservative reference, `dirsizer
 
 Cold-cache and multi-machine numbers are needed to promote it, not to offer it as an option.
 
+## Direction: from a one-shot scanner to a persistent, incremental index
+
+Today every run is a one-shot scan: read the MFT (or walk the tree), aggregate, print, discard. The natural next step is an NTFS metadata index that is built once from the MFT, persisted, and kept current from the USN change journal. The phases below are ordered; each one is only started after the previous one is verified. They are labelled I1-I6 so they do not collide with the P0-P5 sections above.
+
+Implementation plans: I1 in [2026-09-23-i1-finish-current-scanner.md](superpowers/plans/2026-09-23-i1-finish-current-scanner.md); I2-I5 in [2026-09-23-persistent-index.md](superpowers/plans/2026-09-23-persistent-index.md) (an experimental `dirsizer-index.exe`, not a change to `dirsizer.exe`).
+
+```text
+now
+│
+├─ I1  MFT direct scan        → fast, correct one-shot size analysis
+├─ I2  persistent index       → cheaper second and later runs
+├─ I3  USN journal            → incremental update
+├─ I4  subtree query          → analysis of one directory from the shared index
+├─ I5  repeated analysis      → fast before/after comparison around a cleanup
+└─ I6  metadata engine        → candidates only: search, fzf-like search, listing, file manager
+```
+
+### I1 - Finish the current scanner
+
+Do not change the design here; finish what is open. MFT direct scan, whole-volume file/folder aggregation, and the FSCTL cross-check are done (P0-P4); `dirsizer.exe` already picks MFT, FSCTL, or a directory walk automatically. Remaining:
+
+- [ ] Correctness and stability on a large MFT and on another volume (see "Promotion criteria" above).
+- [ ] Performance with a cold file cache and on a second machine (P3, P5).
+
+Deliverable: a fast, correct one-shot NTFS size analyzer.
+
+### I2 - Persistent metadata index
+
+Reuse a previous result without rescanning the MFT.
+
+```text
+MFT scan → in-memory index → on-disk cache
+```
+
+Candidate fields per record: FRN (record number + sequence), parent FRN, name, logical size, directory/file flag, the timestamps actually needed, and volume identity (serial number, MFT geometry). Per volume: the USN journal ID and the last processed USN, recorded at scan time so I3 can resume from it.
+
+No USN-based updates yet. Goal: measure load cost against scan cost, and define when a cache is invalid (different volume serial, journal ID changed or journal deleted, format version changed).
+
+- [ ] Specify the on-disk format, versioning, location, and invalidation rules.
+- [ ] Save and load the index; the loaded result must equal a fresh scan (same comparison style as `Compare-Readers.ps1`).
+- [ ] Measure load time and file size against scan time on `C:`.
+
+### I3 - Incremental update from the USN journal
+
+```text
+initial MFT scan → persistent index → USN journal (create/delete/rename/modify)
+                → index update → folder-size update
+```
+
+Rule: **do not infer the final state from USN events alone.** Use the journal as a change notification and a list of affected FRNs, then establish the current state from the MFT:
+
+```text
+USN event → affected FRN → re-read the MFT record if needed → current state
+```
+
+- [ ] Read the journal from the saved USN; handle journal wrap (`ERROR_JOURNAL_ENTRY_DELETED`), journal recreation (ID change), and a disabled journal by falling back to a full rescan.
+- [ ] Apply create, delete, rename/move (parent change), size change, and hard-link changes; re-read records by FRN instead of trusting event payloads.
+- [ ] Update directory totals after the changes. First recompute the whole index in memory: the result is identical to a scan by construction, and its cost gets measured. Update only the ancestor chains if that cost turns out to dominate an incremental run.
+- [ ] Verify: after a scripted set of changes on the `T:` fixture, the incrementally updated index equals a fresh full scan.
+
+### I4 - Subtree-scoped analysis
+
+Analysing `C:\Users\foo\Downloads` becomes a query on the index: resolve the path to its FRN, take its descendants, aggregate. It is not a separate scanner.
+
+```text
+whole-volume MFT index
+├── C:\Users
+├── D:\Games
+└── E:\Archive
+```
+
+Today a non-root path always uses the directory walk (unified-strategy spec); with an index, any subtree of an indexed volume can be answered without walking it.
+
+- [ ] Path → FRN resolution on the index; subtree totals equal to a fresh scan of that subtree (and explain differences with `dirsizer-fs.exe`, as in design_fs.md).
+- [ ] Share one index across whole-volume and subtree analyses.
+
+### I5 - Fast repeated analysis
+
+The typical cleanup loop is: analyse → delete unwanted files → analyse again. Today the second step is a full MFT scan and a full re-aggregation. With I2-I4 it becomes: previous index → USN delta → update only the changed parts → re-aggregate.
+
+- [ ] Before/after report: which directories shrank or grew, by how much, since the previous run.
+- [ ] Measure the second run against a full rescan after a realistic cleanup.
+
+### I6 - Candidates after the index exists (not planned)
+
+Not planned work. Re-evaluate only after I2-I3 are complete and verified. The same index could serve:
+
+```text
+NTFS index
+├── folder size
+├── file search
+├── fzf-like search
+├── recent files
+└── directory listing
+```
+
+Candidates: file search, fzf-like interactive search, fast directory listing, and eventually a file manager (`zurari for Win`). None of these changes the current purpose of the project, which is folder-size analysis.
+
 ## Deferred semantics
 
 `--allocated` is intentionally not part of the current CLI. Resident, sparse, compressed, and hard-linked allocation semantics need a separate specification and test matrix before physical usage is reported.
