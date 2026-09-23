@@ -27,7 +27,7 @@ static class SelfTests
 
     static void MalformedRecordIsRejected()
     {
-        var record = Fixture.Record(100);
+        var record = RecordFixture.Record(100);
         BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(48, 4), 0x30);
         BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(52, 4), 0xFFFFFFF0);
         Assert(RecordParser.Parse(100, record) is null, "malformed attribute should be rejected");
@@ -35,8 +35,8 @@ static class SelfTests
 
     static void ExtensionRecordPreservesBaseReference()
     {
-        var record = Fixture.Record(101, baseReference: 100);
-        Fixture.AddData(record, 77);
+        var record = RecordFixture.Record(101, baseReference: 100);
+        RecordFixture.AddData(record, 77);
         var parsed = RecordParser.Parse(101, record);
         Assert(parsed is not null, "extension record should parse");
         Assert(parsed!.HeaderSequenceNumber == 1, "record header sequence was not parsed");
@@ -46,9 +46,9 @@ static class SelfTests
 
     static void HardLinksPreserveEachParentName()
     {
-        var record = Fixture.Record(200);
-        Fixture.AddName(record, 5, "first.txt", 1);
-        Fixture.AddName(record, 6, "second.txt", 1);
+        var record = RecordFixture.Record(200);
+        RecordFixture.AddName(record, 5, "first.txt", 1);
+        RecordFixture.AddName(record, 6, "second.txt", 1);
         var parsed = RecordParser.Parse(200, record);
         Assert(parsed is not null && parsed.Names.Count == 2, "hard-link names were not preserved");
         var firstFound = false;
@@ -64,8 +64,8 @@ static class SelfTests
 
     static void RootSelfReferenceIsParsed()
     {
-        var record = Fixture.Record(5);
-        Fixture.AddName(record, 5, ".", 1);
+        var record = RecordFixture.Record(5);
+        RecordFixture.AddName(record, 5, ".", 1);
         var parsed = RecordParser.Parse(5, record);
         Assert(parsed is not null && parsed.Names.Count == 1 && parsed.Names[0].Parent.RecordNumber == 5, "root self-reference was not parsed");
     }
@@ -127,60 +127,62 @@ static class SelfTests
     {
         if (!condition) throw new InvalidOperationException(message);
     }
+}
 
-    static class Fixture
+// Builds synthetic MFT records for self-tests. Shared by SelfTests (P0) and dirsizer-index's IndexSelfTests.
+static class RecordFixture
+{
+    public static byte[] Record(ulong number, ulong baseReference = 0, bool directory = false, int size = 512)
     {
-        public static byte[] Record(ulong number, ulong baseReference = 0)
-        {
-            var record = new byte[512];
-            record[0] = (byte)'F';
-            record[1] = (byte)'I';
-            record[2] = (byte)'L';
-            record[3] = (byte)'E';
-            BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(16), 1);
-            BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(20), 48);
-            BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(22), 1);
-            BinaryPrimitives.WriteUInt64LittleEndian(record.AsSpan(32), baseReference);
-            BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(48), uint.MaxValue);
-            return record;
-        }
-
-        public static void AddName(byte[] record, ulong parent, string name, byte nameSpace)
-        {
-            var offset = NextAttribute(record);
-            var nameBytes = Encoding.Unicode.GetBytes(name);
-            var valueLength = 66 + nameBytes.Length;
-            var attributeLength = Align8(24 + valueLength);
-            BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset), 0x30);
-            BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset + 4), (uint)attributeLength);
-            record[offset + 16] = (byte)valueLength;
-            BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(offset + 20), 24);
-            BinaryPrimitives.WriteUInt64LittleEndian(record.AsSpan(offset + 24), parent);
-            record[offset + 24 + 64] = (byte)name.Length;
-            record[offset + 24 + 65] = nameSpace;
-            nameBytes.CopyTo(record, offset + 24 + 66);
-            EndAttribute(record, offset + attributeLength);
-        }
-
-        public static void AddData(byte[] record, long size)
-        {
-            var offset = NextAttribute(record);
-            BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset), 0x80);
-            BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset + 4), 24);
-            record[offset + 16] = (byte)size;
-            BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(offset + 20), 24);
-            EndAttribute(record, offset + 24);
-        }
-
-        static int NextAttribute(byte[] record)
-        {
-            var offset = 48;
-            while (BinaryPrimitives.ReadUInt32LittleEndian(record.AsSpan(offset)) != uint.MaxValue)
-                offset += (int)BinaryPrimitives.ReadUInt32LittleEndian(record.AsSpan(offset + 4));
-            return offset;
-        }
-
-        static void EndAttribute(byte[] record, int offset) => BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset), uint.MaxValue);
-        static int Align8(int value) => (value + 7) & ~7;
+        var record = new byte[size];
+        record[0] = (byte)'F';
+        record[1] = (byte)'I';
+        record[2] = (byte)'L';
+        record[3] = (byte)'E';
+        BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(16), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(20), 48);
+        BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(22), (ushort)(directory ? 3 : 1));
+        BinaryPrimitives.WriteUInt64LittleEndian(record.AsSpan(32), baseReference);
+        BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(48), uint.MaxValue);
+        return record;
     }
+
+    public static void AddName(byte[] record, ulong parent, string name, byte nameSpace)
+    {
+        var offset = NextAttribute(record);
+        var nameBytes = Encoding.Unicode.GetBytes(name);
+        var valueLength = 66 + nameBytes.Length;
+        var attributeLength = Align8(24 + valueLength);
+        BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset), 0x30);
+        BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset + 4), (uint)attributeLength);
+        BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset + 16), (uint)valueLength);
+        BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(offset + 20), 24);
+        BinaryPrimitives.WriteUInt64LittleEndian(record.AsSpan(offset + 24), parent);
+        record[offset + 24 + 64] = (byte)name.Length;
+        record[offset + 24 + 65] = nameSpace;
+        nameBytes.CopyTo(record, offset + 24 + 66);
+        EndAttribute(record, offset + attributeLength);
+    }
+
+    // A resident unnamed $DATA attribute whose value length is `size` (the value bytes themselves are not written).
+    public static void AddData(byte[] record, long size)
+    {
+        var offset = NextAttribute(record);
+        BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset), 0x80);
+        BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset + 4), 24);
+        BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset + 16), (uint)size);
+        BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(offset + 20), 24);
+        EndAttribute(record, offset + 24);
+    }
+
+    public static int NextAttribute(byte[] record)
+    {
+        var offset = 48;
+        while (BinaryPrimitives.ReadUInt32LittleEndian(record.AsSpan(offset)) != uint.MaxValue)
+            offset += (int)BinaryPrimitives.ReadUInt32LittleEndian(record.AsSpan(offset + 4));
+        return offset;
+    }
+
+    public static void EndAttribute(byte[] record, int offset) => BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset), uint.MaxValue);
+    public static int Align8(int value) => (value + 7) & ~7;
 }
