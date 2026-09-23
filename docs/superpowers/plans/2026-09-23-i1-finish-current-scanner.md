@@ -48,21 +48,21 @@ The 0.6.0 release renamed the bulk tool's assembly to `dirsizer-mft` (`src\DirSi
 **Files:**
 - Modify: `scripts\Compare-Readers.ps1:15`, `scripts\Compare-Benchmark.ps1:16`, `scripts\Compare-Fs.ps1:27`, `scripts\Test-BulkInstability.ps1:29`, `scripts\Get-ReferenceSnapshot.ps1` (default `$Path` line)
 
-- [ ] **Step 1: Show that the default path is broken**
+- [x] **Step 1: Show that the default path is broken**
 
 Run: `Test-Path artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll; Test-Path artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll`
 Expected: `False` then `True`. If `dirsizer-bulk.dll` exists, it is a stale leftover. Delete it
 (`Remove-Item artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.*`) so it cannot hide the bug. Then run
 `.\scripts\Compare-Readers.ps1 -Volume T:`. Expected: it fails because it cannot find `dirsizer-bulk.dll`.
 
-- [ ] **Step 2: Replace the four literal defaults**
+- [x] **Step 2: Replace the four literal defaults**
 
 In each of `Compare-Readers.ps1`, `Compare-Benchmark.ps1` and `Compare-Fs.ps1`, change `\dirsizer-bulk.dll'` to
 `\dirsizer-mft.dll'` in the default-path line only. Do not change the comments or the output text: the tool is still
 called "bulk" in those reports. In `Test-BulkInstability.ps1` change
 `testhooks_win-x64\dirsizer-bulk.dll'` to `testhooks_win-x64\dirsizer-mft.dll'`.
 
-- [ ] **Step 3: Replace the computed default in `Get-ReferenceSnapshot.ps1`**
+- [x] **Step 3: Replace the computed default in `Get-ReferenceSnapshot.ps1`**
 
 Replace this line:
 
@@ -77,14 +77,14 @@ with:
 if (-not $Path) { $Path = Join-Path $PSScriptRoot $(if ($Tool -eq 'bulk') { '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll' } else { '..\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll' }) }
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `Select-String -Path scripts\*.ps1 -Pattern 'dirsizer-bulk\.dll'`
 Expected: no output.
 Run: `.\scripts\Compare-Readers.ps1 -Volume T:; $LASTEXITCODE`
 Expected: every line `EQUAL`, and exit code `0`. Paste the output into the task report.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add scripts\Compare-Readers.ps1 scripts\Compare-Benchmark.ps1 scripts\Compare-Fs.ps1 scripts\Test-BulkInstability.ps1 scripts\Get-ReferenceSnapshot.ps1
@@ -98,7 +98,7 @@ git commit -m "scripts: default to dirsizer-mft.dll, the bulk tool's assembly na
 **Files:**
 - Create: `scripts\New-TestVolume.ps1`
 
-- [ ] **Step 1: Write the script**
+- [x] **Step 1: Write the script**
 
 ```powershell
 <#
@@ -156,12 +156,12 @@ $null = Format-Volume -Partition $partition -FileSystem NTFS -AllocationUnitSize
 Get-Volume -DriveLetter $Letter | Format-List DriveLetter, FileSystemLabel, FileSystem, Size, AllocationUnitSize
 ```
 
-- [ ] **Step 2: Create volume U: (64 KiB clusters, 4 KiB MFT records)**
+- [x] **Step 2: Create volume U: (64 KiB clusters, 4 KiB MFT records)**
 
 Run: `.\scripts\New-TestVolume.ps1 -Path C:\dirsizer-test\u.vhdx -Letter U -AllocationUnitSize 65536 -LargeFrs`
 Expected: `FileSystemLabel : NTFSTEST`, `FileSystem : NTFS`, `AllocationUnitSize : 65536`.
 
-- [ ] **Step 3: Confirm the geometry with an independent tool**
+- [x] **Step 3: Confirm the geometry with an independent tool**
 
 Run: `fsutil fsinfo ntfsinfo U:`
 Expected: `Bytes Per Cluster : 65536` and `Bytes Per FileRecord Segment : 4096`. If the record size is 1024,
@@ -170,12 +170,12 @@ Expected: `Bytes Per Cluster : 65536` and `Bytes Per FileRecord Segment : 4096`.
 Run: `dotnet artifacts\bin\DirSizer.Inspect\release_win-x64\dirsizer-inspect.dll U: --volume`
 Expected: the same cluster size and MFT record size as `fsutil`.
 
-- [ ] **Step 4: Test `-Remove` on a throwaway volume, then keep U:**
+- [x] **Step 4: Test `-Remove` on a throwaway volume, then keep U:**
 
 Run: `.\scripts\New-TestVolume.ps1 -Path C:\dirsizer-test\x.vhdx -Letter X -SizeMB 256; .\scripts\New-TestVolume.ps1 -Path C:\dirsizer-test\x.vhdx -Remove; Test-Path C:\dirsizer-test\x.vhdx; Get-Volume -DriveLetter X -ErrorAction SilentlyContinue`
 Expected: the volume listing, then `removed C:\dirsizer-test\x.vhdx`, then `False`, and nothing for `Get-Volume`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add scripts\New-TestVolume.ps1
@@ -189,7 +189,7 @@ git commit -m "scripts: New-TestVolume.ps1 creates a disposable VHDX-backed NTFS
 **Files:**
 - Create: `scripts\New-FragmentedMft.ps1`
 
-- [ ] **Step 1: Write the script**
+- [x] **Step 1: Write the script**
 
 ```powershell
 <#
@@ -251,7 +251,7 @@ if ($extents -lt $TargetExtents) { throw "The MFT has only $extents extents afte
 "done: MFT extents = $extents"
 ```
 
-- [ ] **Step 2: Create volume V: and fragment it**
+- [x] **Step 2: Create volume V: and fragment it**
 
 Run: `.\scripts\New-TestVolume.ps1 -Path C:\dirsizer-test\v.vhdx -Letter V -SizeMB 2048 -AllocationUnitSize 4096`
 Run: `.\scripts\New-FragmentedMft.ps1 -Volume V:`
@@ -259,13 +259,13 @@ Expected: the last line is `done: MFT extents = N` with N ≥ 16. If the script 
 reached, run it again with `-MaxRounds 16`. If it still fails, record the extent count it reached, lower
 `-TargetExtents` to that count (it must be at least 4), and say so in the report.
 
-- [ ] **Step 3: List the extents**
+- [x] **Step 3: List the extents**
 
 Run: `dotnet artifacts\bin\DirSizer.Inspect\release_win-x64\dirsizer-inspect.dll V: --mft-extents`
 Expected: the first line says `N extent(s) map the $MFT data stream`, with the N from step 2, and the table lists
 extents with different LCNs.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add scripts\New-FragmentedMft.ps1
@@ -283,20 +283,20 @@ run on T: before.
 **Files:**
 - Modify: `docs\roadmap.md` ("Promotion criteria" and "I1")
 
-- [ ] **Step 1: Add the standard fixture to both volumes**
+- [x] **Step 1: Add the standard fixture to both volumes**
 
 Run: `.\scripts\New-AbFixture.ps1 -Volume U:; .\scripts\New-AbFixture.ps1 -Volume V:`
 Expected: both finish without an error. The fixture includes hard links, streams, sparse and compressed files, and
 deleted files. NTFS compression does not work with clusters larger than 4 KiB, so on U: the compressed-file step may
 fail. If it does, record the exact error, edit nothing, and continue: the rest of the fixture is enough.
 
-- [ ] **Step 2: Reader against reader**
+- [x] **Step 2: Reader against reader**
 
 Run: `.\scripts\Compare-Readers.ps1 -Volume U:; "exit=$LASTEXITCODE"; .\scripts\Compare-Readers.ps1 -Volume V:; "exit=$LASTEXITCODE"`
 Expected: every line `EQUAL` and `exit=0`, twice. A `DIFFERENT` line is a real finding: stop, keep the snapshot files
 (the script prints their paths in `$env:TEMP`), and report them to the user instead of continuing.
 
-- [ ] **Step 3: Record-level comparison and the extent map read with small buffers**
+- [x] **Step 3: Record-level comparison and the extent map read with small buffers**
 
 Run: `artifacts\bin\DirSizer.Compare\release_win-x64\DirSizer.Compare.exe U: --max-slots=10000000; "exit=$LASTEXITCODE"`
 Run: `artifacts\bin\DirSizer.Compare\release_win-x64\DirSizer.Compare.exe V: --max-slots=10000000; "exit=$LASTEXITCODE"`
@@ -305,12 +305,12 @@ Expected: `exit=0` for both. On V:, the `extent_map buffer=32` and `buffer=48` l
 `ERROR_MORE_DATA` path running on a real fragmented map. If the `.exe` does not exist, list
 `artifacts\bin\DirSizer.Compare\release_win-x64\` and use the executable found there.
 
-- [ ] **Step 4: Stability**
+- [x] **Step 4: Stability**
 
 Run `.\scripts\Compare-Readers.ps1 -Volume V:` two more times. Expected: `EQUAL` each time. This matches the three
 stable runs recorded for T:.
 
-- [ ] **Step 5: Record the results in the roadmap**
+- [x] **Step 5: Record the results in the roadmap**
 
 In `docs\roadmap.md`, under "Promotion criteria", tick the first two items and add the evidence after each one. Use
 the numbers from the runs; this example shows the form:
@@ -323,7 +323,7 @@ the numbers from the runs; this example shows the form:
 Under "I1", tick "Correctness and stability on a large MFT and on another volume" only if both runs passed. Write
 "large MFT" as "fragmented MFT (<N> extents)", because a VHDX cannot hold a larger MFT than C: has.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add docs\roadmap.md
@@ -340,7 +340,7 @@ empty cache. The script must refuse the system drive, because dismounting it is 
 **Files:**
 - Modify: `scripts\Compare-Benchmark.ps1`
 
-- [ ] **Step 1: Add the parameter**
+- [x] **Step 1: Add the parameter**
 
 In the `param(...)` block, after `[int]$Runs = 5,`, add:
 
@@ -349,7 +349,7 @@ In the `param(...)` block, after `[int]$Runs = 5,`, add:
     [switch]$ColdDismount,
 ```
 
-- [ ] **Step 2: Refuse the system drive and dismount before each run**
+- [x] **Step 2: Refuse the system drive and dismount before each run**
 
 Right after `$ErrorActionPreference = 'Stop'`, add:
 
@@ -369,12 +369,12 @@ Change the heading line from `"$Runs alternating runs on $Volume  (each cell: ..
 "$Runs alternating runs on $Volume$(if ($ColdDismount) { ', volume dismounted before every run (cold NTFS cache)' })  (each cell: min / median / max, milliseconds unless noted)"
 ```
 
-- [ ] **Step 3: Verify the refusal**
+- [x] **Step 3: Verify the refusal**
 
 Run: `.\scripts\Compare-Benchmark.ps1 -Volume C: -ColdDismount -Runs 1`
 Expected: it stops immediately with `-ColdDismount cannot be used on the system drive C:.` before running anything.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add scripts\Compare-Benchmark.ps1
@@ -388,7 +388,7 @@ git commit -m "Compare-Benchmark.ps1: -ColdDismount empties the NTFS cache of a 
 **Files:**
 - Modify: `docs\roadmap.md`
 
-- [ ] **Step 1: Warm, then cold, on each volume**
+- [x] **Step 1: Warm, then cold, on each volume**
 
 Run, one at a time, and keep the full output of each:
 
@@ -402,20 +402,20 @@ Run, one at a time, and keep the full output of each:
 Expected: each ends with `phase accounting: phase_sum_ms == total_ms in all 10 measured runs` and a
 `per-pair total speedup` line.
 
-- [ ] **Step 2: Check that the cold runs really were cold**
+- [x] **Step 2: Check that the cold runs really were cold**
 
 Compare the `raw read MB/s` median of the cold run with that of the warm run on the same volume. The cold run is
 colder only if its MB/s is clearly lower (below 80 % of the warm median). If the two are within 20 % of each other,
 the host is probably caching the VHDX file itself. Then the result is **not** a cold-cache measurement. Record it as
 "dismount run, host cache not excluded" and do not tick the cold-cache item.
 
-- [ ] **Step 3: Record in the roadmap**
+- [x] **Step 3: Record in the roadmap**
 
 Under the P3 item "Benchmark a cold file cache and another volume", add the medians (FSCTL total, bulk total,
 speedup; raw MB/s warm vs cold) for U: and V:, the conclusion from step 2, and "one machine". Tick the item only if
 step 2 showed a real cold cache. The C: cold numbers come from Task 7.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add docs\roadmap.md
