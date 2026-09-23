@@ -1677,7 +1677,7 @@ git commit -m "I2 checkpoint: dirsizer-index design doc and C: measurements"
 - Create: `src\DirSizer.Index\IndexSelfTests.Usn.cs`
 - Modify: `src\DirSizer.Index\IndexSelfTests.cs` (list)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `src\DirSizer.Index\IndexSelfTests.Usn.cs`:
 
@@ -1776,11 +1776,11 @@ Add to the test list:
             new("usn: a wrapped journal gives null; other errors and no progress throw", ReadChangesReportsWrapsAndErrors),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `UsnChange`, `UsnJournal.ReadResponse`, `ParseRecords` and `ReadChanges` do not exist.
 
-- [ ] **Step 3: Replace `UsnJournal.cs` with the full reader**
+- [x] **Step 3: Replace `UsnJournal.cs` with the full reader**
 
 ```csharp
 using System.Buffers.Binary;
@@ -1878,11 +1878,11 @@ static class UsnJournal
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Expected: `16 self-tests passed, 0 skipped.`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 Normalize-Src
@@ -1898,7 +1898,7 @@ git commit -m "dirsizer-index: read and parse the USN journal (V2 records, wrap 
 - Create: `src\DirSizer.Index\RecordSource.cs`, `src\DirSizer.Index\IndexSelfTests.Update.cs`
 - Modify: `src\DirSizer.Index\IndexSelfTests.cs` (list)
 
-- [ ] **Step 1: Write the failing tests (and the fake record source the update tests reuse)**
+- [x] **Step 1: Write the failing tests (and the fake record source the update tests reuse)**
 
 `src\DirSizer.Index\IndexSelfTests.Update.cs`:
 
@@ -2046,11 +2046,11 @@ Add to the test list:
             new("attribute list: a non-resident list is read through its run list", NonResidentAttributeListIsReadFromItsClusters),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `IRecordSource` and `AttributeList` do not exist.
 
-- [ ] **Step 3: Implement `RecordSource.cs`**
+- [x] **Step 3: Implement `RecordSource.cs`**
 
 ```csharp
 using System.Buffers.Binary;
@@ -2175,11 +2175,11 @@ static class AttributeList
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Expected: `19 self-tests passed, 0 skipped.`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 Normalize-Src
@@ -2195,7 +2195,7 @@ git commit -m "dirsizer-index: read records again through FSCTL and find extensi
 - Create: `src\DirSizer.Index\IndexUpdater.cs`
 - Modify: `src\DirSizer.Index\IndexSelfTests.Update.cs`, `src\DirSizer.Index\IndexSelfTests.cs` (list)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append inside `static partial class IndexSelfTests` in `IndexSelfTests.Update.cs`:
 
@@ -2320,11 +2320,11 @@ Add to the test list:
             new("update: NTFS metadata records are read again without journal entries", MetadataRecordsAreAlwaysReread),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `IndexUpdater` does not exist.
 
-- [ ] **Step 3: Implement `IndexUpdater.cs`**
+- [x] **Step 3: Implement `IndexUpdater.cs`**
 
 ```csharp
 // Brings a loaded index up to date: every record the USN journal names (plus the NTFS metadata records, which change
@@ -2409,17 +2409,17 @@ static class IndexUpdater
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Expected: `25 self-tests passed, 0 skipped.`
 
-- [ ] **Step 5: Mutation check**
+- [x] **Step 5: Mutation check**
 
 In `IndexUpdater.Apply`, delete the line `parts.Sort(...)`, rebuild and run. Expected: `FAIL  update: extension
 records are read through the base record's attribute list` with a `name 0` difference. The extension's DOS name
 must come first, as in the scan. Restore the line: 25 passed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 Normalize-Src
@@ -2435,7 +2435,7 @@ git commit -m "dirsizer-index: IndexUpdater applies journal-named records from t
 - Create: `src\DirSizer.Index\IndexValidity.cs`
 - Modify: `src\DirSizer.Index\IndexRunner.cs` (replace the whole file), `src\DirSizer.Index\IndexOptions.cs` (replace the whole file), `src\DirSizer.Index\IndexSelfTests.Update.cs`, `src\DirSizer.Index\IndexSelfTests.cs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `IndexSelfTests.Update.cs`, inside the class:
 
@@ -2476,11 +2476,11 @@ and add after the `--no-save` line:
 
 In `OptionsRejectBadInput`, delete the line with `"--verify needs the saved index"`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `IndexValidity` and `IndexOptions.Rebuild` do not exist.
 
-- [ ] **Step 3: Implement `IndexValidity.cs`**
+- [x] **Step 3: Implement `IndexValidity.cs`**
 
 ```csharp
 // Whether a loaded index may be brought up to date from the journal. Null means yes; otherwise the reason a full scan
@@ -2500,7 +2500,7 @@ static class IndexValidity
 }
 ```
 
-- [ ] **Step 4: Replace `IndexOptions.cs`**
+- [x] **Step 4: Replace `IndexOptions.cs`**
 
 ```csharp
 // dirsizer-index's options. EXPERIMENTAL tool; see docs\design_index.md.
@@ -2583,7 +2583,7 @@ sealed class IndexOptions
 }
 ```
 
-- [ ] **Step 5: Replace `IndexRunner.cs`**
+- [x] **Step 5: Replace `IndexRunner.cs`**
 
 ```csharp
 using System.Diagnostics;
@@ -2710,11 +2710,11 @@ static class IndexRunner
 The I2 meaning of `--verify` (load the file back and compare) is still covered: every incremental run loads the file,
 and `--verify` then compares the loaded and updated index with a fresh scan.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Expected: `26 self-tests passed, 0 skipped.`
 
-- [ ] **Step 7: First real incremental run on T: (elevated)**
+- [x] **Step 7: First real incremental run on T: (elevated)**
 
 ```powershell
 fsutil usn queryjournal T: > $null 2>&1; if ($LASTEXITCODE -ne 0) { fsutil usn createjournal m=33554432 a=4194304 T: }
@@ -2730,7 +2730,7 @@ Expected on stderr: first `index: full scan (no saved index)` and `benchmark: mo
 mode=incremental`, `verify: differences=0`, and `second exit=0`. Creating the journal on T: is fine: T: is the
 disposable test volume.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 Normalize-Src
@@ -2745,7 +2745,7 @@ git commit -m "dirsizer-index: incremental runs from the USN journal with docume
 **Files:**
 - Create: `scripts\Test-IndexIncremental.ps1`
 
-- [ ] **Step 1: Write the script**
+- [x] **Step 1: Write the script**
 
 ```powershell
 <#
@@ -2909,14 +2909,16 @@ try {
 if ($failures -eq 0) { 'ALL CHECKS PASSED'; exit 0 } else { "$failures CHECK(S) FAILED"; exit 1 }
 ```
 
-- [ ] **Step 2: Run it (elevated)**
+- [x] **Step 2: Run it (elevated)**
 
 Run: `.\scripts\Test-IndexIncremental.ps1 -Volume T:; "exit=$LASTEXITCODE"`
 Expected: every line `PASS`, then `ALL CHECKS PASSED`, `exit=0`. If a `verify` check fails, the samples in the FAIL line
 name the records. Do not relax the check. Follow the superpowers:systematic-debugging skill on the named records,
 using `dirsizer-inspect T: --record=<n>` to see them.
 
-- [ ] **Step 3: Make sure the checks can fail**
+- [x] **Step 3: Make sure the checks can fail**
+
+> Done 2026-09-23: with metadata re-reads disabled the checks as written all passed (T:'s `$MFT` did not grow), so a step was added that creates empty files until `$MFT` grows; then "after $MFT grew" and "after deleting them" failed on record 0. Skipping extension reads failed every verify after the hard links were created. Restored: ALL CHECKS PASSED (36 checks).
 
 In `IndexUpdater.MetadataRecords`, change `number < FirstUserRecord` to `number < 0UL` (no metadata re-reads), rebuild,
 and run the script. Expected: at least one `after creating` or `after editing` verify check FAILs, naming record 0
@@ -2925,7 +2927,7 @@ and run the script. Expected: at least one `after creating` or `after editing` v
 which must fail the linked-file checks. Record which mutation made which check fail, restore the code, rebuild,
 and run the script again: `ALL CHECKS PASSED`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add scripts\Test-IndexIncremental.ps1
@@ -2940,7 +2942,7 @@ git commit -m "scripts: Test-IndexIncremental.ps1, end-to-end incremental update
 - Create: `scripts\Measure-Index.ps1`
 - Modify: `docs\design_index.md`, `docs\roadmap.md`
 
-- [ ] **Step 1: Write the measurement script**
+- [x] **Step 1: Write the measurement script**
 
 ```powershell
 <#
@@ -2996,12 +2998,14 @@ try {
 }
 ```
 
-- [ ] **Step 2: Run on C: (elevated)**
+- [x] **Step 2: Run on C: (elevated)**
 
 Run: `.\scripts\Measure-Index.ps1 -Volume C: -Runs 3`
 Expected: the table and a final `median total: incremental / full = N%` line. Keep the whole output.
 
-- [ ] **Step 3: Decision gate. Stop and report if the index does not pay for itself**
+- [x] **Step 3: Decision gate. Stop and report if the index does not pay for itself**
+
+> Done 2026-09-23: incremental median 4,529 ms = 55 % of full (8,219 ms), so the gate is not met. The largest phases are save_ms 1,914 and load_ms 1,473 (recompute_ms 483). Stopped before I4 and reported to the user.
 
 If the incremental median total is **50 % or more** of the full median, stop before Phase I4. Report the table to the
 user with the dominant incremental phase (`load_ms`, `recompute_ms` or `save_ms`), and ask how to proceed. Likely
@@ -3009,7 +3013,7 @@ remedies: store aggregated sizes to skip `Recompute`; skip saving when nothing c
 chains. They are not planned here because they are not needed unless the numbers say so. If it is below 50 %,
 continue.
 
-- [ ] **Step 4: Append the I3 section to `docs\design_index.md`**
+- [x] **Step 4: Append the I3 section to `docs\design_index.md`**
 
 Insert before `## Privacy`:
 
@@ -3055,7 +3059,7 @@ printed on stderr and in JSON `index.rebuild_reason`.
 Add a row to the measurements table: `| C: (I3, warm cache, 3 + 3 runs, medians) | <records> | <MiB> | full <total_ms> | <save_ms> | <load_ms> | <recompute_ms> |`,
 and below the table one sentence: `Incremental run: <total_ms> ms total (<usn_changes> journal entries, <records_reread> records read again), <N>% of a full run.`
 
-- [ ] **Step 5: Update the roadmap's I3 section**
+- [x] **Step 5: Update the roadmap's I3 section**
 
 Replace the four I3 items with:
 
@@ -3067,7 +3071,7 @@ Replace the four I3 items with:
 - [x] Verify: after a scripted set of changes on the `T:` fixture, the incrementally updated index equals a fresh full scan (`Test-IndexIncremental.ps1`, ALL CHECKS PASSED). C: timings: <incremental / full %> (`Measure-Index.ps1`, one machine, warm cache).
 ```
 
-- [ ] **Step 6: Regression guard and commit**
+- [x] **Step 6: Regression guard and commit**
 
 Run the three regression-guard self-tests. Expected: all pass.
 

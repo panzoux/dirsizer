@@ -168,11 +168,12 @@ Rule: **do not infer the final state from USN events alone.** Use the journal as
 USN event → affected FRN → re-read the MFT record if needed → current state
 ```
 
-- [ ] Read the journal from the saved USN; handle journal wrap (`ERROR_JOURNAL_ENTRY_DELETED`), journal recreation (ID change), and a disabled journal by falling back to a full rescan.
-- [ ] Apply create, delete, rename/move (parent change), size change, and hard-link changes; re-read records by FRN instead of trusting event payloads.
-- [ ] Update directory totals after the changes. First recompute the whole index in memory: the result is identical to a scan by construction, and its cost gets measured. Update only the ancestor chains if that cost turns out to dominate an incremental run.
-- [ ] Verify: after a scripted set of changes on the `T:` fixture, the incrementally updated index equals a fresh full scan.
-
+- [x] Read the journal from the saved USN; handle journal wrap (`ERROR_JOURNAL_ENTRY_DELETED`), journal recreation (ID change), and a disabled journal by falling back to a full rescan. `UsnJournal`, `IndexValidity`; self-tests with synthetic journal pages; on T:, `Test-IndexIncremental.ps1` recreated and disabled the journal and damaged the index file, and each gave a full scan with the stated reason. A wrap was not forced on a real volume (only the self-test covers it).
+- [x] Apply create, delete, rename/move (parent change), size change, and hard-link changes; re-read records by FRN instead of trusting event payloads. `IndexUpdater` (FSCTL re-read, attribute lists for extension records, NTFS metadata re-read every time); `Test-IndexIncremental.ps1`: every `--verify` after real changes on T: had 0 differences, including after 5,000-6,000 new files grew `$MFT` and after they were deleted. The checks failed when metadata re-reads were disabled (record 0, `$MFT`, once the MFT grew; without that step no check failed, so the step was added) and when extension-record reads were disabled (the hard-linked file, whose `$DATA` is in an extension record).
+- [x] Aggregation after an update: the whole index is recomputed in memory (`Recompute`, 483 ms on C:), not only the ancestor chains. The result is identical to a scan by construction.
+- [ ] Only if `recompute_ms` dominates an incremental run: update the ancestor chains instead of recomputing everything. On C: it does not (483 of 4,529 ms); saving (1,914 ms) and loading (1,473 ms) the whole file do.
+- [x] Verify: after a scripted set of changes on the `T:` fixture, the incrementally updated index equals a fresh full scan (`Test-IndexIncremental.ps1`, ALL CHECKS PASSED, 36 checks). C: timings: an incremental run takes 55 % of a full run (4,529 ms against 8,219 ms, medians of 3, `Measure-Index.ps1`, one machine, warm cache, JIT Release build).
+- [ ] Decision gate before I4 (plan: incremental below 50 % of a full run) **not met**: 55 %. Candidate remedies, none started: do not rewrite the file when nothing changed, or write only the changed part; store the aggregated sizes so `Recompute` can be skipped; a faster load.
 ### I4 - Subtree-scoped analysis
 
 Analysing `C:\Users\foo\Downloads` becomes a query on the index: resolve the path to its FRN, take its descendants, aggregate. It is not a separate scanner.
