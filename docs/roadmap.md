@@ -151,9 +151,9 @@ Candidate fields per record: FRN (record number + sequence), parent FRN, name, l
 
 No USN-based updates yet. Goal: measure load cost against scan cost, and define when a cache is invalid (different volume serial, journal ID changed or journal deleted, format version changed).
 
-- [ ] Specify the on-disk format, versioning, location, and invalidation rules.
-- [ ] Save and load the index; the loaded result must equal a fresh scan (same comparison style as `Compare-Readers.ps1`).
-- [ ] Measure load time and file size against scan time on `C:`.
+- [x] Specify the on-disk format, versioning, location, and invalidation rules: [design_index.md](design_index.md) (`src\DirSizer.Index\IndexFile.cs`, format version 1, SHA-256 trailer, `%LOCALAPPDATA%\dirsizer\index\<serial>.dsix`).
+- [x] Save and load the index; the loaded result must equal a fresh scan: `dirsizer-index --verify` loads the saved file back, aggregates it with the shared stages and compares it record by record with the scan (T: and C:, 0 differences; the check was shown to fail when the file writes a wrong size: 283 differences on T:, exit code 2). The whole-volume listing equals `dirsizer-mft --json` on T: (root, 35 directories, 234 files, root children).
+- [x] Measure load time and file size against scan time on `C:`: 923,854 records, 111.6 MiB, full scan 5,843 ms, save 2,051 ms, load 1,703 ms, recompute 374 ms (medians of 3, warm cache, one machine, JIT Release build). Load + recompute (about 2.1 s) is about 2.8x cheaper than a warm full scan.
 
 ### I3 - Incremental update from the USN journal
 

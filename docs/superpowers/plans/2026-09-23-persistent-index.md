@@ -140,12 +140,12 @@ sizes. The existing tests keep their behaviour.
 **Files:**
 - Modify: `src\Shared\SelfTests.cs`
 
-- [ ] **Step 1: Baseline**
+- [x] **Step 1: Baseline**
 
 Run: `dotnet build DirSizer.sln -c Release; dotnet artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll --self-test; dotnet artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll --self-test`
 Expected: `P0 self-tests passed.` from both, `P3 USA self-tests passed.` from dirsizer-mft, and exit code 0.
 
-- [ ] **Step 2: Move the class**
+- [x] **Step 2: Move the class**
 
 In `src\Shared\SelfTests.cs`, delete the whole nested block `    static class Fixture { ... }` (from the line
 `    static class Fixture` to its closing brace, just before the file's final `}`). After the final `}` of `SelfTests`,
@@ -215,19 +215,19 @@ static class RecordFixture
 The old `AddName` wrote the value length as one byte (`record[offset + 16] = (byte)valueLength;`), and so did
 `AddData`. Both now write the full 32-bit field. For the existing tests' values (below 256) the bytes are identical.
 
-- [ ] **Step 3: Update the eight references**
+- [x] **Step 3: Update the eight references**
 
 In the same file, replace every `Fixture.Record(`, `Fixture.AddData(` and `Fixture.AddName(` with
 `RecordFixture.Record(`, `RecordFixture.AddData(` and `RecordFixture.AddName(`. They are at lines 30, 38, 39, 49, 50,
 51, 67 and 68 of the original file. `src\DirSizer.Bulk\BulkSelfTests.cs` has its own nested `Fixture`. Leave it alone.
 
-- [ ] **Step 4: Verify nothing changed**
+- [x] **Step 4: Verify nothing changed**
 
 Run step 1's command again. Expected: the same output, exit code 0.
 Run: `Select-String -Path src\Shared\SelfTests.cs -Pattern '\bFixture\.'`
 Expected: no output.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 Normalize-Src
@@ -243,7 +243,7 @@ git commit -m "SelfTests: top-level RecordFixture (directory flag, 32-bit value 
 - Create: `src\DirSizer.Index\DirSizer.Index.csproj`, `src\DirSizer.Index\IndexOptions.cs`, `src\DirSizer.Index\IndexSelfTests.cs`, `src\DirSizer.Index\IndexProgram.cs`
 - Modify: `DirSizer.sln`
 
-- [ ] **Step 1: The project file**
+- [x] **Step 1: The project file**
 
 `src\DirSizer.Index\DirSizer.Index.csproj`:
 
@@ -286,7 +286,7 @@ git commit -m "SelfTests: top-level RecordFixture (directory flag, 32-bit value 
 `BulkIntegration.cs` is compiled in for its `ScanProgress` class, which prints the same `Scanning MFT: n/N (p%)`
 progress line on stderr.
 
-- [ ] **Step 2: Options**
+- [x] **Step 2: Options**
 
 `src\DirSizer.Index\IndexOptions.cs`:
 
@@ -365,7 +365,7 @@ sealed class IndexOptions
 `IndexFile.DefaultDirectory` is added in Task 3. Until then the project does not build; steps 3-5 come first, and
 the build happens in Task 3.
 
-- [ ] **Step 3: Test harness with the option tests**
+- [x] **Step 3: Test harness with the option tests**
 
 `src\DirSizer.Index\IndexSelfTests.cs`:
 
@@ -465,7 +465,7 @@ static partial class IndexSelfTests
 }
 ```
 
-- [ ] **Step 4: Entry point (scanning is wired in Task 7)**
+- [x] **Step 4: Entry point (scanning is wired in Task 7)**
 
 `src\DirSizer.Index\IndexProgram.cs`:
 
@@ -495,7 +495,7 @@ Console.Error.WriteLine("error: scanning is not wired in yet (Task 7 of the plan
 return 1;
 ```
 
-- [ ] **Step 5: Add the project to the solution**
+- [x] **Step 5: Add the project to the solution**
 
 Run: `dotnet sln DirSizer.sln add src\DirSizer.Index\DirSizer.Index.csproj`
 Then `git diff DirSizer.sln`. Expected: one new `Project(...) = "DirSizer.Index", "src\DirSizer.Index\DirSizer.Index.csproj"`
@@ -503,7 +503,7 @@ entry, its configuration lines, and a nesting line under the existing `src` fold
 appears, run `git checkout DirSizer.sln` and use
 `dotnet sln DirSizer.sln add src\DirSizer.Index\DirSizer.Index.csproj --solution-folder src` instead.
 
-- [ ] **Step 6: No commit yet**
+- [x] **Step 6: No commit yet**
 
 The project does not build until Task 3 adds `IndexFile`. Task 3 commits both.
 
@@ -515,7 +515,7 @@ The project does not build until Task 3 adds `IndexFile`. Task 3 commits both.
 - Create: `src\DirSizer.Index\VolumeIndex.cs`, `src\DirSizer.Index\IndexFile.cs`, `src\DirSizer.Index\IndexSelfTests.File.cs`
 - Modify: `src\DirSizer.Index\IndexSelfTests.cs` (test list)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `src\DirSizer.Index\IndexSelfTests.File.cs`:
 
@@ -680,12 +680,12 @@ In `src\DirSizer.Index\IndexSelfTests.cs`, add at the end of the `tests` list in
             new("index file: TryLoad says why nothing was loaded", TryLoadExplainsWhy),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `dotnet build DirSizer.sln -c Release`
 Expected: FAIL with errors naming `VolumeIdentity`, `VolumeIndex` and `IndexFile` (they do not exist yet).
 
-- [ ] **Step 3: Implement `VolumeIndex.cs`**
+- [x] **Step 3: Implement `VolumeIndex.cs`**
 
 ```csharp
 // The persistent index of one NTFS volume (docs\design_index.md). Records holds the merged MFT records exactly as a
@@ -726,7 +726,7 @@ sealed class VolumeIndex(VolumeIdentity identity, ulong journalId, long nextUsn,
 }
 ```
 
-- [ ] **Step 4: Implement `IndexFile.cs`**
+- [x] **Step 4: Implement `IndexFile.cs`**
 
 ```csharp
 using System.Buffers.Binary;
@@ -895,18 +895,18 @@ static class IndexFile
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `dotnet build DirSizer.sln -c Release; dotnet artifacts\bin\DirSizer.Index\release_win-x64\dirsizer-index.dll --self-test; "exit=$LASTEXITCODE"`
 Expected: `P0 self-tests passed.`, eight `ok` lines, `8 self-tests passed, 0 skipped.`, `exit=0`.
 
-- [ ] **Step 6: Mutation check (the tests must be able to fail)**
+- [x] **Step 6: Mutation check (the tests must be able to fail)**
 
 In `VolumeIndex.Recompute`, comment out `record.Size = 0;` and rebuild. Run the self-tests. Expected: `FAIL  index:
 Recompute can run twice` (root 360 instead of 180). Restore the line, rebuild, and run again: 8 passed. Record both
 outputs in the task report.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 Normalize-Src
@@ -924,13 +924,13 @@ there is no self-test. It is checked on a real volume in Task 7.
 **Files:**
 - Create: `src\DirSizer.Index\UsnJournal.cs`
 
-- [ ] **Step 1: Confirm the error codes on this machine**
+- [x] **Step 1: Confirm the error codes on this machine**
 
 Run: `foreach ($c in 38, 1178, 1179, 1181) { '{0} {1}' -f $c, [ComponentModel.Win32Exception]::new($c).Message }`
 Expected (in the OS language): 38 end of file; 1178 the journal is being deleted; 1179 the journal is not active; 1181
 the journal entry has been deleted.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 ```csharp
 using System.Buffers.Binary;
@@ -970,12 +970,12 @@ static class UsnJournal
 }
 ```
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 Run: `dotnet build DirSizer.sln -c Release`
 Expected: `Build succeeded`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 Normalize-Src
@@ -991,7 +991,7 @@ git commit -m "dirsizer-index: read the USN journal id and position"
 - Create: `src\DirSizer.Index\IndexVerifier.cs`
 - Modify: `src\DirSizer.Index\IndexSelfTests.File.cs` (one test), `src\DirSizer.Index\IndexSelfTests.cs` (list)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append this method inside `static partial class IndexSelfTests` in `IndexSelfTests.File.cs`:
 
@@ -1024,12 +1024,12 @@ Add to the test list in `IndexSelfTests.cs`:
             new("verifier: finds size, name, missing, extra, total and reference differences", VerifierFindsEachKindOfDifference),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `dotnet build DirSizer.sln -c Release`
 Expected: FAIL, `IndexVerifier` does not exist.
 
-- [ ] **Step 3: Implement `IndexVerifier.cs`**
+- [x] **Step 3: Implement `IndexVerifier.cs`**
 
 ```csharp
 // Compares an index with a fresh scan record by record: identity, logical size, every name (in order), and the derived
@@ -1090,11 +1090,11 @@ static class IndexVerifier
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Build and run the self-tests. Expected: `9 self-tests passed, 0 skipped.`, exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 Normalize-Src
@@ -1112,7 +1112,7 @@ The whole code goes in now: I2 and I3 query only the whole volume, and I4 adds p
 - Create: `src\DirSizer.Index\SubtreeQuery.cs`, `src\DirSizer.Index\IndexSelfTests.Query.cs`
 - Modify: `src\DirSizer.Index\IndexSelfTests.cs` (list)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `src\DirSizer.Index\IndexSelfTests.Query.cs`:
 
@@ -1157,11 +1157,11 @@ Add to the test list:
             new("query: a subtree covers only that directory", SubtreeQueryCoversOnlyTheDirectory),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `SubtreeQuery` does not exist.
 
-- [ ] **Step 3: Implement `SubtreeQuery.cs`**
+- [x] **Step 3: Implement `SubtreeQuery.cs`**
 
 ```csharp
 // Answers a size query for one directory from an aggregated index: the directory itself, its direct children, and the
@@ -1258,11 +1258,11 @@ static class SubtreeQuery
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Expected: `11 self-tests passed, 0 skipped.`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 Normalize-Src
@@ -1278,7 +1278,7 @@ git commit -m "dirsizer-index: SubtreeQuery answers whole-volume and subtree siz
 - Create: `src\DirSizer.Index\IndexRunner.cs`, `src\DirSizer.Index\IndexOutput.cs`
 - Modify: `src\DirSizer.Index\IndexProgram.cs`, `src\DirSizer.Index\IndexSelfTests.Query.cs`, `src\DirSizer.Index\IndexSelfTests.cs`
 
-- [ ] **Step 1: Write the failing output test**
+- [x] **Step 1: Write the failing output test**
 
 Append to `IndexSelfTests.Query.cs`, inside the class:
 
@@ -1317,11 +1317,11 @@ Add to the test list:
             new("output: text summary line, stderr reason, JSON index and verify objects", OutputHasTheSummaryAndTheIndexObject),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `IndexRun`, `IndexTimings` and `IndexOutput` do not exist.
 
-- [ ] **Step 3: Implement `IndexRunner.cs` (I2 form)**
+- [x] **Step 3: Implement `IndexRunner.cs` (I2 form)**
 
 ```csharp
 using System.Diagnostics;
@@ -1408,7 +1408,7 @@ static class IndexRunner
 }
 ```
 
-- [ ] **Step 4: Implement `IndexOutput.cs`**
+- [x] **Step 4: Implement `IndexOutput.cs`**
 
 ```csharp
 using System.Text.Json;
@@ -1506,7 +1506,7 @@ partial class IndexJsonContext : JsonSerializerContext;
 
 `JsonItem` is the existing `sealed record JsonItem(string Path, long Size)` from `src\Shared\Cli.cs`.
 
-- [ ] **Step 5: Wire the entry point**
+- [x] **Step 5: Wire the entry point**
 
 In `IndexProgram.cs`, replace the last two lines:
 
@@ -1533,11 +1533,11 @@ catch (Exception exception) when (exception is IOException or UnauthorizedAccess
 }
 ```
 
-- [ ] **Step 6: Self-tests**
+- [x] **Step 6: Self-tests**
 
 Build and run the self-tests. Expected: `12 self-tests passed, 0 skipped.`, exit 0.
 
-- [ ] **Step 7: Real volume T: (elevated)**
+- [x] **Step 7: Real volume T: (elevated)**
 
 ```powershell
 $dir = Join-Path $env:TEMP 'dirsizer-index-i2'
@@ -1561,14 +1561,14 @@ $mft = dotnet artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll T: --
 Expected: equal root sizes, then `directories equal: True` and `files equal: True`. The whole-volume query uses the same
 selection code on the same scan.
 
-- [ ] **Step 8: Mutation check of `--verify`**
+- [x] **Step 8: Mutation check of `--verify`**
 
 In `IndexFile.Serialize`, change `writer.Write(record.LogicalSize);` to `writer.Write(record.LogicalSize + 1);`,
 rebuild, and run the step 7 `--verify` command again. Expected: `verify: differences=N` with N > 0, samples naming
 `logical size`, and `exit=2`. The self-test `LoadedIndexAggregatesLikeTheScan` must fail too. Restore the line,
 rebuild, and run step 7 again: `differences=0`, `exit=0`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```powershell
 Normalize-Src
@@ -1584,7 +1584,7 @@ git commit -m "dirsizer-index: full scan, save, --verify by reloading; text and 
 - Create: `docs\design_index.md`
 - Modify: `docs\roadmap.md`
 
-- [ ] **Step 1: Measure on C: (elevated; the index goes to a temporary directory)**
+- [x] **Step 1: Measure on C: (elevated; the index goes to a temporary directory)**
 
 ```powershell
 $dir = Join-Path $env:TEMP 'dirsizer-index-i2'
@@ -1599,7 +1599,7 @@ Expected: `exit=0 differences=0` three times. On a live C:, `--verify` in I2 com
 it, so live changes do not matter. Record `records`, `index_bytes` and the medians of `scan_ms`, `save_ms`, `load_ms` and
 `recompute_ms`.
 
-- [ ] **Step 2: Write `docs\design_index.md`**
+- [x] **Step 2: Write `docs\design_index.md`**
 
 ```markdown
 # dirsizer-index design
@@ -1647,7 +1647,7 @@ not list without elevation. In the default location only the user, SYSTEM and Ad
 
 Fill the table row with step 1's numbers. MiB = `index_bytes / 1MB`, one decimal.
 
-- [ ] **Step 3: Update the roadmap's I2 section**
+- [x] **Step 3: Update the roadmap's I2 section**
 
 In `docs\roadmap.md`, under `### I2 - Persistent metadata index`, tick the three items and replace their text:
 
@@ -1657,7 +1657,7 @@ In `docs\roadmap.md`, under `### I2 - Persistent metadata index`, tick the three
 - [x] Measure load time and file size against scan time on `C:`: <records> records, <MiB> MiB, full scan <scan_ms> ms, save <save_ms> ms, load <load_ms> ms, recompute <recompute_ms> ms (medians of 3, warm cache, one machine).
 ```
 
-- [ ] **Step 4: Regression guard and commit**
+- [x] **Step 4: Regression guard and commit**
 
 Run the three regression-guard self-tests from the ground rules. Expected: all pass.
 
