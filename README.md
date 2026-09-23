@@ -10,52 +10,70 @@ DirSizer is released under the MIT License. See [LICENSE](LICENSE).
 
 ## Status
 
-This is the first practical baseline. The three NTFS tools (`dirsizer-bulk`, `dirsizer-fsctl`, `dirsizer-inspect`) read the master file table (MFT) directly; they do not use `FindFirstFile`, `Directory.EnumerateFiles`, the USN journal, or path traversal. `dirsizer.exe` is the general-purpose counterpart: it walks the directory tree of any filesystem with `FindFirstFileExW` and needs no elevation.
+`dirsizer.exe` is the normal entry point: given a path, it automatically picks the best available, validated
+scan method for that path's file system, so you never need to know which one ran. On an elevated NTFS drive
+root it reads the master file table (MFT) directly; otherwise it walks the directory tree with
+`FindFirstFileExW`, which needs no elevation and works on any filesystem. See
+[dirsizer.exe (the unified entry point)](#dirsizerexe-the-unified-entry-point) below.
+
+The same underlying code is also available as four dedicated executables, for anyone who already knows which
+method they want, or for diagnosis, benchmarking and development: `dirsizer-fs.exe` (any filesystem, no
+elevation), `dirsizer-mft.exe` (raw `$MFT`, experimental), `dirsizer-fsctl.exe` (`FSCTL_GET_NTFS_FILE_RECORD`,
+the NTFS reference implementation), and `dirsizer-inspect.exe` (looking inside the `$MFT`, not a usage scan).
+The three NTFS tools read the master file table directly; they do not use `FindFirstFile`,
+`Directory.EnumerateFiles`, the USN journal, or path traversal.
 
 ## The tools
 
-DirSizer is four separate executables:
+DirSizer is five separate executables, all built from the same underlying code:
 
 | Tool | What it is for | Notes |
 | --- | --- | --- |
-| `dirsizer.exe` | Folder-size scan of **any** filesystem, without elevation | Reads directory listings with `FindFirstFileExW` on several threads and never opens individual files. Slower than `dirsizer-bulk` on NTFS, and its totals differ from the NTFS tools by design; see [dirsizer.exe](#dirsizerexe-any-filesystem-no-elevation) below and [docs/design_fs.md](docs/design_fs.md). |
-| `dirsizer-bulk.exe` | Fast folder-size scan | **Experimental.** Reads the raw `$MFT` in large blocks. About 1.4x faster than `dirsizer-fsctl` in measurements. |
-| `dirsizer-fsctl.exe` | The same folder-size scan through `FSCTL_GET_NTFS_FILE_RECORD` | The reference implementation. Use it to cross-check `dirsizer-bulk`, to benchmark, or when you want the conservative method. |
+| `dirsizer.exe` | **Normal use.** Automatically picks the best available strategy for the path | No options name an implementation. See [dirsizer.exe (the unified entry point)](#dirsizerexe-the-unified-entry-point) below and [docs/superpowers/specs/2026-09-23-unified-scan-strategy-design.md](docs/superpowers/specs/2026-09-23-unified-scan-strategy-design.md). |
+| `dirsizer-fs.exe` | Folder-size scan of **any** filesystem, without elevation | Reads directory listings with `FindFirstFileExW` on several threads and never opens individual files. Slower than `dirsizer-mft` on NTFS, and its totals differ from the NTFS tools by design; see [dirsizer-fs.exe](#dirsizer-fsexe-any-filesystem-no-elevation) below and [docs/design_fs.md](docs/design_fs.md). |
+| `dirsizer-mft.exe` | Fast folder-size scan | **Experimental.** Reads the raw `$MFT` in large blocks. About 1.4x faster than `dirsizer-fsctl` in measurements. Renamed from `dirsizer-bulk.exe`; same implementation. |
+| `dirsizer-fsctl.exe` | The same folder-size scan through `FSCTL_GET_NTFS_FILE_RECORD` | The reference implementation. Use it to cross-check `dirsizer-mft`, to benchmark, or when you want the conservative method. |
 | `dirsizer-inspect.exe` | Looking inside the NTFS `$MFT` | For investigating and developing: one record's attributes, the `$MFT` extents, slot counts, raw-vs-FSCTL comparison. Not a usage scan. |
 
-`dirsizer-bulk` and `dirsizer-fsctl` take the same options and print the same results; you choose the one you want, and neither ever falls back to the other. `dirsizer.exe` has its own options (`--workers`, `--strict`). Run any tool with `--help` (`dirsizer-inspect --help` is the most detailed).
+`dirsizer-mft` and `dirsizer-fsctl` take the same options and print the same results; you choose the one you
+want, and neither ever falls back to the other. `dirsizer-fs.exe` has its own options (`--workers`,
+`--strict`, `--enumerator`). `dirsizer.exe` has a smaller option set than any of them (no option names an
+implementation). Run any tool with `--help` (`dirsizer-inspect --help` is the most detailed).
 
 ### Elevation
 
-The three NTFS tools read raw NTFS metadata, so each of those executables carries a manifest that requires Administrator (`requireAdministrator`): Windows asks for elevation (UAC) when you start one. There is no `runas` logic in the code. In an already elevated terminal they simply run. `dirsizer-bulk` and `dirsizer-inspect` also enable `SeBackupPrivilege` inside the process, and report a clear error if the account does not hold it.
+The three NTFS tools read raw NTFS metadata, so each of those executables carries a manifest that requires Administrator (`requireAdministrator`): Windows asks for elevation (UAC) when you start one. There is no `runas` logic in the code. In an already elevated terminal they simply run. `dirsizer-mft` and `dirsizer-inspect` also enable `SeBackupPrivilege` inside the process, and report a clear error if the account does not hold it.
 
-One consequence you should know about: Windows cannot start a program that requires elevation *in place* from a non-elevated console. PowerShell reports that the operation requires elevation, and other launchers open a separate elevated window, where you cannot redirect or pipe the output. To use `> result.json` or a pipe, open an Administrator terminal first. (This behaviour comes from Windows and was observed with these executables.) The elevated window closes when the process exits, so when a tool finds it is the only process attached to its console it waits for Enter before exiting (`ConsolePause.cs`); in a terminal shared with a shell it does not wait. The manifest is the single file `src\Shared\app.manifest`; changing `level` there to `asInvoker` removes the requirement for all three. `dirsizer.exe` needs none of this: it has its own manifest with `asInvoker`, runs in any terminal, and `> file` and pipes work.
+One consequence you should know about: Windows cannot start a program that requires elevation *in place* from a non-elevated console. PowerShell reports that the operation requires elevation, and other launchers open a separate elevated window, where you cannot redirect or pipe the output. To use `> result.json` or a pipe, open an Administrator terminal first. (This behaviour comes from Windows and was observed with these executables.) The elevated window closes when the process exits, so when a tool finds it is the only process attached to its console it waits for Enter before exiting (`ConsolePause.cs`); in a terminal shared with a shell it does not wait. The manifest is the single file `src\Shared\app.manifest`; changing `level` there to `asInvoker` removes the requirement for all three.
+
+`dirsizer.exe` and `dirsizer-fs.exe` need none of this: each has its own manifest with `asInvoker`, runs in any terminal, and `> file` and pipes work. `asInvoker` does not *prevent* running elevated, though: launched from an already-elevated console, `dirsizer.exe` inherits that token and its `$MFT`/FSCTL strategies become available; from a normal console, those are unavailable and it silently uses the same directory walk `dirsizer-fs.exe` does. Neither ever prompts for UAC on its own.
 
 ## Build
 
-Install the .NET 8 SDK. Each tool is its own project:
+Install the .NET 8 SDK. Each tool is its own project; `DirSizer.Fs.Core` and `DirSizer.Core` are libraries, not executables, shared by more than one tool:
 
 | Project | Executable |
 | --- | --- |
-| `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `dirsizer-bulk` |
+| `src\DirSizer\DirSizer.csproj` | `dirsizer` (the unified entry point) |
+| `src\DirSizer.Fs\DirSizer.Fs.csproj` | `dirsizer-fs` |
+| `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `dirsizer-mft` |
 | `src\DirSizer.Fsctl\DirSizer.Fsctl.csproj` | `dirsizer-fsctl` |
 | `src\DirSizer.Inspect\DirSizer.Inspect.csproj` | `dirsizer-inspect` |
-| `src\DirSizer.Fs\DirSizer.Fs.csproj` | `dirsizer` |
 
 Publish a small NativeAOT executable (this needs the Visual Studio C++ build tools):
 
 ```powershell
-dotnet publish src\DirSizer.Bulk\DirSizer.Bulk.csproj -c Release -r win-x64
+dotnet publish src\DirSizer\DirSizer.csproj -c Release -r win-x64
 ```
 
-The executable is under `artifacts\publish\DirSizer.Bulk\release_win-x64\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all four (see "Releases").
+The executable is under `artifacts\publish\DirSizer\release_win-x64\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all five (see "Releases").
 
 For a fast local compile, build the solution (`DirSizer.sln`, every tool and the developer tool) or one project. Each project builds into its own folder, `artifacts\bin\<project>\release_win-x64\`:
 
 ```powershell
 dotnet build -c Release
 dotnet build src\DirSizer.Bulk\DirSizer.Bulk.csproj -c Release
-dotnet artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll T:
+dotnet artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll T:
 ```
 
 See [docs/design_mft.md](docs/design_mft.md) for how the bulk reader works (extents, USA fixup, record order, live-volume check), the layout of the three tools, and the measured results.
@@ -64,11 +82,11 @@ Verify the two scan tools against each other on a quiescent test volume (a small
 
 ```powershell
 .\scripts\New-AbFixture.ps1 -Volume T:                                # creates a fixture with links, streams, sparse and compressed files, deleted files
-.\scripts\Compare-Readers.ps1 -Volume T:                              # dirsizer-fsctl vs dirsizer-bulk, JSON and text; exit code 0 = EQUAL
+.\scripts\Compare-Readers.ps1 -Volume T:                              # dirsizer-fsctl vs dirsizer-mft, JSON and text; exit code 0 = EQUAL
 .\scripts\Compare-Benchmark.ps1 -Volume C: -Runs 5                    # alternating, min/median/max per phase
 .\scripts\Test-BulkInstability.ps1 -Volume T:                         # grows the MFT of a disposable NTFSTEST volume; see the script header
-.\scripts\Compare-Fs.ps1 -Path .\src -Oracle                          # dirsizer.exe vs an independent sum, on a quiescent tree
-.\scripts\Compare-Fs.ps1 -Path T:\ -Bulk                              # dirsizer.exe vs dirsizer-bulk: lists the expected differences (docs\design_fs.md)
+.\scripts\Compare-Fs.ps1 -Path .\src -Oracle                          # dirsizer-fs.exe vs an independent sum, on a quiescent tree
+.\scripts\Compare-Fs.ps1 -Path T:\ -Bulk                              # dirsizer-fs.exe vs dirsizer-mft: lists the expected differences (docs\design_fs.md)
 .\scripts\Compare-Fs.ps1 -Path C:\ -Sweep -Runs 3                     # walk time for 1, 2, 4 and 8 workers
 ```
 
@@ -83,9 +101,10 @@ Each tool has built-in tests that need no volume:
 
 ```powershell
 dotnet .\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll --self-test
-dotnet .\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll --self-test
+dotnet .\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll --self-test
 dotnet .\artifacts\bin\DirSizer.Inspect\release_win-x64\dirsizer-inspect.dll --self-test
-dotnet .\artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll --self-test       # builds a fixture in %TEMP%; needs no elevation
+dotnet .\artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer-fs.dll --self-test    # builds a fixture in %TEMP%; needs no elevation
+dotnet .\artifacts\bin\DirSizer\release_win-x64\dirsizer.dll --self-test          # the unified entry point's own selector/CLI tests
 ```
 
 ## Repository layout
@@ -93,14 +112,16 @@ dotnet .\artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll --self-test     
 ```
 DirSizer.sln                 all projects
 Directory.Build.props        the version (one place) and the shared build output settings
+src\DirSizer\                dirsizer.exe: the unified, automatic entry point (IScanStrategy, ScanStrategySelector)
 src\DirSizer.Fsctl\          dirsizer-fsctl
-src\DirSizer.Bulk\           dirsizer-bulk
+src\DirSizer.Bulk\           dirsizer-mft (folder name unchanged; only the executable was renamed)
 src\DirSizer.Inspect\        dirsizer-inspect
-src\DirSizer.Fs\             dirsizer.exe (directory enumeration, any filesystem, no elevation; independent of Core)
+src\DirSizer.Fs\             dirsizer-fs.exe: the thin host (directory enumeration, any filesystem, no elevation)
+src\DirSizer.Fs.Core\        the directory-enumeration engine, shared by dirsizer-fs.exe and dirsizer.exe
 src\DirSizer.Compare\        developer tool: record-by-record comparison of the two readers
 src\DirSizer.Core\           the reader-independent pipeline (merge, relationships, aggregation)
 src\Shared\                  files compiled into more than one tool (options and output, ConsolePause, app.manifest, ...)
-src\Shared\BulkReader\       the raw $MFT reader, shared by dirsizer-bulk, dirsizer-inspect and the developer tool
+src\Shared\BulkReader\       the raw $MFT reader, shared by dirsizer-mft, dirsizer-inspect, dirsizer.exe and the developer tool
 scripts\                     benchmark, comparison and release scripts
 docs\                        design notes and the roadmap
 artifacts\                   build output (git-ignored)
@@ -116,8 +137,8 @@ version without publishing it:
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1
 ```
 
-This creates `dist\DirSizer-v<version>-win-x64.zip` containing the four NativeAOT
-executables (dirsizer.exe, dirsizer-bulk.exe, dirsizer-fsctl.exe, dirsizer-inspect.exe), this README, and the license. To create the GitHub release, install and sign in
+This creates `dist\DirSizer-v<version>-win-x64.zip` containing the five NativeAOT
+executables (dirsizer.exe, dirsizer-fs.exe, dirsizer-mft.exe, dirsizer-fsctl.exe, dirsizer-inspect.exe), this README, and the license. To create the GitHub release, install and sign in
 with GitHub CLI (`gh auth login`), create a Markdown release-notes file, and
 run:
 
@@ -132,12 +153,21 @@ release.
 
 ## Usage
 
-Run the NTFS tools from an Administrator terminal (see "Elevation"). `dirsizer-bulk` and `dirsizer-fsctl` share these options; `dirsizer-inspect` has its own (`dirsizer-inspect --help`); `dirsizer.exe` is described in its own section below:
+For normal use, just run `dirsizer.exe`; it needs no elevation and no option names an implementation:
 
 ```powershell
-.\dirsizer-bulk.exe C:\
-.\dirsizer-bulk.exe D:\ --top=50 --files
-.\dirsizer-bulk.exe C:\ --top=100 --json > result.json
+.\dirsizer.exe C:\Users
+.\dirsizer.exe D:\ --top=50 --files
+.\dirsizer.exe C:\ --top=100 --json > result.json
+```
+
+Run the NTFS tools from an Administrator terminal (see "Elevation") when you want one specific method.
+`dirsizer-mft` and `dirsizer-fsctl` share these options; `dirsizer-inspect` has its own (`dirsizer-inspect --help`); `dirsizer-fs.exe` is described in its own section below:
+
+```powershell
+.\dirsizer-mft.exe C:\
+.\dirsizer-mft.exe D:\ --top=50 --files
+.\dirsizer-mft.exe C:\ --top=100 --json > result.json
 .\dirsizer-fsctl.exe C:\ --top=1 --json --benchmark
 .\dirsizer-inspect.exe C: --record 5
 ```
@@ -152,40 +182,68 @@ could not be reconstructed and it was not a known NTFS metadata record.
 
 Progress is rendered on one updating line to stderr as `current/estimated (percent%)`. This keeps stdout suitable for table output or JSON redirection.
 
-## dirsizer.exe (any filesystem, no elevation)
+## dirsizer.exe (the unified entry point)
 
-`dirsizer.exe` measures folder sizes on **any** Windows filesystem (NTFS, ReFS, exFAT, FAT, network shares) by reading directory listings with `FindFirstFileExW`. It never opens individual files, reads directories on several threads at once, and runs without elevation: a directory you cannot read is skipped and counted.
+`dirsizer.exe` picks the best available, validated scan strategy for the path automatically -- the user
+never names a backend. Full design: [docs/superpowers/specs/2026-09-23-unified-scan-strategy-design.md](docs/superpowers/specs/2026-09-23-unified-scan-strategy-design.md).
 
 ```powershell
-.\dirsizer.exe C:\Users
-.\dirsizer.exe \\server\share --top=50 --files
-.\dirsizer.exe D:\ --json > result.json
-.\dirsizer.exe C:\ --strict --workers 8 --benchmark
+.\dirsizer.exe C:\
+.\dirsizer.exe D:\some\directory --top=50 --files
+.\dirsizer.exe C:\ --json --benchmark
+```
+
+Selection policy: on an NTFS drive root, with an administrator token available (an already-elevated
+console), it reads the `$MFT` directly (`strategy=mft`, the fastest); if that is unavailable but
+`FSCTL_GET_NTFS_FILE_RECORD` is, it uses that (`strategy=fsctl`); otherwise -- a non-elevated console, a
+non-NTFS filesystem, or a path that is not a whole drive (the other two strategies only read an entire
+volume) -- it walks the directory tree (`strategy=filesystem`), exactly as `dirsizer-fs.exe` does. This
+order is a documented, currently unmeasured preference (MFT and FSCTL are expected to beat the directory
+walk on a large NTFS tree, having never been benchmarked against each other), not a guarantee; see the
+design spec's "Selection policy is a prior, not a measurement".
+
+Options: `--top=N`, `--files`, `--dirs`, `--json`, `--strict`, `--benchmark`, `--workers N` (only meaningful
+when the filesystem strategy runs), `--self-test`, `-h` -- deliberately smaller than any dedicated tool's own
+option set, since none of them name an implementation. To force one specific method, use `dirsizer-fs.exe`,
+`dirsizer-mft.exe` or `dirsizer-fsctl.exe` directly. `--json` reports `statistics.performance.strategy`
+(`"mft"`, `"fsctl"` or `"filesystem"`) and, if a fallback between strategies happened,
+`strategy_fallback`/`strategy_fallback_reason`. Exit codes: 0 result written; 1 error; 3 with `--strict`,
+part of the scan could not be completed.
+
+## dirsizer-fs.exe (any filesystem, no elevation)
+
+`dirsizer-fs.exe` measures folder sizes on **any** Windows filesystem (NTFS, ReFS, exFAT, FAT, network shares) by reading directory listings with `FindFirstFileExW`. It never opens individual files, reads directories on several threads at once, and runs without elevation: a directory you cannot read is skipped and counted. This is the same engine `dirsizer.exe` falls back to when no NTFS strategy is available.
+
+```powershell
+.\dirsizer-fs.exe C:\Users
+.\dirsizer-fs.exe \\server\share --top=50 --files
+.\dirsizer-fs.exe D:\ --json > result.json
+.\dirsizer-fs.exe C:\ --strict --workers 8 --benchmark
 ```
 
 The options are `--top`, `--files`, `--dirs`, `--json`, `--benchmark` and `--self-test` as in the NTFS tools (`--diagnostics` is not offered), plus `--workers N` (default: the number of processors, at most 8) and `--strict` (exit code 3 if a directory could not be read; the result is still written). The path may be any directory, not only a drive root. `--enumerator=NAME[:CLASS[:KiB]]` is an advanced option for comparisons: it chooses the API that reads the directories (`find`, the default, is `FindFirstFileExW`; `handle` is `GetFileInformationByHandleEx`; `nt` is `NtQueryDirectoryFileEx`, experimental; `auto` is `handle:full:64` with an automatic fallback to `find` if that information class is not supported on the file system being scanned); the measurements are in [docs/design_fs.md](docs/design_fs.md), "Enumerator comparison (P4)" and "Default enumerator with a fallback". The `idextd` class does not work on exFAT. Exit codes: 0 result written; 1 error; 3 with `--strict`, at least one directory could not be read. Progress is one updating line on stderr (`Scanning: N directories, M files`), shown only when stderr is a terminal. The JSON output is ASCII only (non-ASCII characters in paths are escaped), so it is exact under any console code page; the table output follows the console code page, so use `--json` when paths must be exact. The JSON has the same top-level layout as the NTFS tools' but different `statistics` and `performance` keys; see [docs/design_fs.md](docs/design_fs.md).
 
 Its results are **not identical** to those of the NTFS tools, by design (details and measured differences: [docs/design_fs.md](docs/design_fs.md)):
 
-| Case | `dirsizer.exe` | NTFS tools |
+| Case | `dirsizer-fs.exe` | NTFS tools |
 | --- | --- | --- |
 | Hard-linked file | counted in every directory that holds a name | counted once |
 | NTFS metadata (`$MFT`, `$Bitmap`, ...) | not visible, not counted | counted |
 | Directory you cannot read | skipped, counted in `directories_denied` | counted |
 | Junction, symbolic link or mount point directory | not entered, counted in `reparse_skipped` | listed as an empty directory |
 
-Sizes are logical (the size the directory listing reports); alternate data streams are not included. On NTFS `dirsizer.exe` is expected to be slower than `dirsizer-bulk`: use the NTFS tools when you want speed and can run elevated. Only local NTFS has been verified; other filesystems and network shares are supported by design and unverified until they are run.
+Sizes are logical (the size the directory listing reports); alternate data streams are not included. On NTFS `dirsizer-fs.exe` is expected to be slower than `dirsizer-mft`: use the NTFS tools when you want speed and can run elevated. Only local NTFS has been verified; other filesystems and network shares are supported by design and unverified until they are run.
 
-## dirsizer-bulk (experimental)
+## dirsizer-mft (experimental)
 
-`dirsizer-bulk` reads the raw `$MFT` from the volume in large blocks (the record offsets come from the `$MFT` extent map) and then runs exactly the same parsing, merging, relationship, aggregation, and output code as `dirsizer-fsctl`. In measurements on one machine it was about 1.4x faster on a live C: volume (median 1.37x to 1.52x in five benchmark sessions; per pair mostly 1.36x to 1.59x, and 2.14x once when the FSCTL run in that pair was unusually slow). All of the saving is in reading the MFT; parsing and merging cost the same. Do not treat the figure as a guarantee: it has only been measured on one machine and one volume, with a warm file cache.
+`dirsizer-mft` reads the raw `$MFT` from the volume in large blocks (the record offsets come from the `$MFT` extent map) and then runs exactly the same parsing, merging, relationship, aggregation, and output code as `dirsizer-fsctl`. In measurements on one machine it was about 1.4x faster on a live C: volume (median 1.37x to 1.52x in five benchmark sessions; per pair mostly 1.36x to 1.59x, and 2.14x once when the FSCTL run in that pair was unusually slow). All of the saving is in reading the MFT; parsing and merging cost the same. Do not treat the figure as a guarantee: it has only been measured on one machine and one volume, with a warm file cache. (Renamed from `dirsizer-bulk`; same implementation, same project folder `src\DirSizer.Bulk\`.)
 
-- **No fallback.** If the raw read fails, `dirsizer-bulk` reports the error and exits with 1. It never switches to `dirsizer-fsctl` on its own.
-- **Same result.** On a quiescent NTFS test volume the complete output of `dirsizer-bulk` (root size, every directory and file with path, size, and order, the root's children, counters, unresolved records) is identical to that of `dirsizer-fsctl`, in the JIT and the NativeAOT build. `scripts\Compare-Readers.ps1` checks this.
+- **No fallback.** If the raw read fails, `dirsizer-mft` reports the error and exits with 1. It never switches to `dirsizer-fsctl` on its own.
+- **Same result.** On a quiescent NTFS test volume the complete output of `dirsizer-mft` (root size, every directory and file with path, size, and order, the root's children, counters, unresolved records) is identical to that of `dirsizer-fsctl`, in the JIT and the NativeAOT build. `scripts\Compare-Readers.ps1` checks this.
 - **Progress.** Like `dirsizer-fsctl`, it writes progress to stderr on one updating line (`Scanning MFT: n/N (p%)`, then `Calculating folder sizes...`), so a scan that takes several seconds is not silent. stdout, and so `> result.json` and pipes, is unaffected.
-- **Live-volume check.** `dirsizer-bulk` records the MFT layout (volume serial number, geometry, valid data length, and extent map) before and after reading and rescans once if it changed. This detects the MFT growing or being relocated while it is read. It does **not** detect files being created, deleted, or changed inside existing records during the scan; a live volume can always change under either tool.
+- **Live-volume check.** `dirsizer-mft` records the MFT layout (volume serial number, geometry, valid data length, and extent map) before and after reading and rescans once if it changed. This detects the MFT growing or being relocated while it is read. It does **not** detect files being created, deleted, or changed inside existing records during the scan; a live volume can always change under either tool.
 
-Exit codes of `dirsizer-bulk` (`dirsizer-fsctl` uses 0 and 1):
+Exit codes of `dirsizer-mft` (`dirsizer-fsctl` uses 0 and 1):
 
 | Code | Meaning |
 | ---: | --- |
@@ -193,7 +251,7 @@ Exit codes of `dirsizer-bulk` (`dirsizer-fsctl` uses 0 and 1):
 | 1 | An error (bad option, invalid volume, not NTFS, no access, I/O failure); no result. |
 | 3 | The result was produced, but the MFT layout changed during the scan even after one rescan, so the result should not be treated as a stable snapshot. A warning is written to stderr. This is not an error like exit code 1: the output is complete, only its consistency is not guaranteed. |
 
-With `--json`, both tools write a `reader` field (`fsctl` or `bulk`). `dirsizer-bulk` also writes a `bulk` object with the scan stability (`stable` or `unstable`), the number of attempts, the layout change that was seen, the phase timings, and the slot counts. For `dirsizer-bulk`, `records_scanned` is the number of MFT slots examined, `records_skipped` counts slots that could not be read or parsed, and `statistics.performance.query_ms` is the whole acquisition phase (extents, raw read, USA fixup, layout re-check).
+With `--json`, both tools write a `reader` field (`fsctl` or `bulk`). `dirsizer-mft` also writes a `bulk` object with the scan stability (`stable` or `unstable`), the number of attempts, the layout change that was seen, the phase timings, and the slot counts. For `dirsizer-mft`, `records_scanned` is the number of MFT slots examined, `records_skipped` counts slots that could not be read or parsed, and `statistics.performance.query_ms` is the whole acquisition phase (extents, raw read, USA fixup, layout re-check).
 
 ## dirsizer-inspect
 
