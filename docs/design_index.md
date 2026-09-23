@@ -23,13 +23,33 @@ of everything before it. The exact layout is in the comment at the top of `src\D
 Saving writes `<file>.tmp`, flushes it to disk, then renames it over the old file. A full scan whose MFT layout changed
 while it was read (exit code 3, as with `dirsizer-mft`) is never saved.
 
+## Delta file (after I3)
+
+Rewriting the whole base file after every incremental run cost about 1.9 s on `C:`, for a few dozen changed records.
+So an incremental run writes only `<serial>.dsix.delta` next to the base file. It holds the base file's SHA-256 trailer,
+the new journal id, position and write time, and the current state of every entry changed since the base file was
+written: the record, or the record number if the entry was removed. `VolumeIndex.Dirty` tracks those entries;
+`IndexUpdater` adds every entry it replaces or removes. The delta is cumulative, so each run replaces it (again through
+`.tmp` and a rename) instead of appending to it. It has its own SHA-256 trailer.
+
+- Loading reads the base file, then applies the delta: removals first, then records in ascending order.
+- A delta whose base hash is not the base file's is ignored. It is left over from a crash between a full save's rename
+  and its deletion of the delta, and the base file is newer than it.
+- A damaged delta (checksum, magic, version, duplicate or trailing data) makes the whole index unusable, because the
+  base file alone is older than the journal position the delta recorded. A full scan runs.
+- A full save is used after a full scan, and after an incremental run once the delta would hold more than
+  max(1,000, 5 % of the records) entries (`IndexFile.ShouldSaveDelta`). A full save deletes the delta, so loading never
+  applies a large one.
+
+JSON `index.save_kind` is `full`, `delta` or `none`, with `delta_records` and `delta_bytes`.
+
 ## When a saved index is not used
 
 The file is ignored and the whole `$MFT` is scanned again when: it does not exist; its checksum, magic or version is
-wrong; the volume identity differs; the volume has no active USN journal, or the index was written without one; the
-journal was recreated (different id); the saved position is no longer in the journal (it wrapped) or is ahead of it;
-an attribute list or extension record could not be read during the update; or `--rebuild` was given. The reason is
-printed on stderr and in JSON `index.rebuild_reason`.
+wrong; the delta file is damaged; the volume identity differs; the volume has no active USN journal, or the index was
+written without one; the journal was recreated (different id); the saved position is no longer in the journal (it
+wrapped) or is ahead of it; an attribute list or extension record could not be read during the update; or `--rebuild`
+was given. The reason is printed on stderr and in JSON `index.rebuild_reason`.
 
 ## Incremental update (I3)
 
@@ -47,7 +67,7 @@ printed on stderr and in JSON `index.rebuild_reason`.
    order as a scan would, and the result replaces the entry. If an attribute list or extension record cannot be read,
    the run falls back to a full scan (`IndexUpdater`).
 5. Parents, names and directory sizes are computed again for the whole index (`Recompute`). Then the new journal
-   position is stored and the index is saved.
+   position is stored and the index is saved, as a delta file while few entries changed (see "Delta file").
 
 Replaying a change twice is harmless, because step 4 reads the current state. That is why the position stored after
 a full scan is the one read before the scan started, and why changes made during a run are simply seen again next
@@ -58,8 +78,10 @@ another operating system). Use `--rebuild` after such a mount.
 
 End-to-end test: `scripts\Test-IndexIncremental.ps1` (T:). Besides creating, editing, renaming, moving and deleting
 files and hard links, it creates empty files until `$MFT` grows, because only that exercises the metadata re-read of
-step 4 (NTFS writes no journal entry for `$MFT` itself). It was shown to fail when the metadata re-read or the
-extension-record reads were disabled. Timings: `scripts\Measure-Index.ps1`.
+step 4 (NTFS writes no journal entry for `$MFT` itself). It checks which kind of save each run made, and it reloads the
+delta right after deleting a tree that is in the base file (before new files can reuse the freed records). It was shown
+to fail when the metadata re-read, the extension-record reads, the delta's removals, or the recording of replaced
+entries were disabled. Timings: `scripts\Measure-Index.ps1`.
 
 ## Privacy
 
@@ -73,6 +95,7 @@ not list without elevation. In the default location only the user, SYSTEM and Ad
 | --- | --- | --- | --- | --- | --- | --- |
 | C: (I2, warm cache, 3 runs, medians) | 923,854 | 111.6 MiB | 5,843 ms | 2,051 ms | 1,703 ms | 374 ms |
 | C: (I3, warm cache, 3 + 3 runs, medians) | 924,034 | 111.6 MiB | 5,916 ms | 1,743 ms | 1,473 ms | 483 ms |
+| C: (I3 + delta file, warm cache, 3 + 3 runs, medians) | 924,103 | 111.6 MiB | 5,795 ms | 2,155 ms (full) / 7 ms (delta) | 1,508 ms | 480 ms |
 
 Loading the file and recomputing parents, names and sizes took about 2.1 s, against 5.8 s for the full scan: a reload
 is about 2.8x cheaper than a warm scan on this machine (a cold scan is much slower, see roadmap P3). `--verify` itself
@@ -84,3 +107,8 @@ I3 incremental run on `C:`: 4,529 ms total (median; 10 journal entries, 40 recor
 (1,914 ms) and loading it (1,473 ms); reading the journal took 1.5 ms, re-reading the records 278 ms, and `Recompute`
 483 ms. This misses the plan's 50 % gate for starting I4. JIT Release build, one machine, `C:` live and warm,
 `scripts\Measure-Index.ps1 -Runs 3`.
+
+With the delta file: an incremental run on `C:` took 2,630 ms (median; 7 journal entries, 39 records read again, a
+delta of 32 entries and 1.8 KB written in 7 ms), 31 % of a full run (8,418 ms). It is now dominated by loading the
+base file (1,508 ms), then `Recompute` (480 ms), the query (365 ms) and re-reading records (275 ms). Same machine,
+build and script as above.

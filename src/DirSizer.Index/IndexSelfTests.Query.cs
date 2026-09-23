@@ -34,7 +34,7 @@ static partial class IndexSelfTests
         var result = new UnifiedScanResult("T:\\", 25, new UnifiedItem("T:\\", 180), [new UnifiedItem("T:\\A", 170)],
             [new UnifiedItem("T:\\", 180), new UnifiedItem("T:\\A", 170)], [new UnifiedItem("T:\\A\\B\\b.bin", 100)],
             4, 0, 5, [], "index", null, null, 12.5);
-        return new IndexRun(result, "full", "no saved index", "X:\\idx\\0000000000000001.dsix", 4096, true, true, 10, 7, 1000, null, verify, new IndexTimings());
+        return new IndexRun(result, "full", "no saved index", "X:\\idx\\0000000000000001.dsix", 4096, true, true, 10, 7, 1000, null, verify, new IndexTimings(), "delta", 3, 512);
     }
 
     static void OutputHasTheSummaryAndTheIndexObject()
@@ -52,6 +52,9 @@ static partial class IndexSelfTests
         AssertEqual("full", index.GetProperty("mode").GetString(), "json index.mode");
         AssertEqual("no saved index", index.GetProperty("rebuild_reason").GetString(), "json index.rebuild_reason");
         AssertEqual(7UL, index.GetProperty("journal_id").GetUInt64(), "json index.journal_id");
+        AssertEqual("delta", index.GetProperty("save_kind").GetString(), "json index.save_kind");
+        AssertEqual(3, index.GetProperty("delta_records").GetInt32(), "json index.delta_records");
+        AssertEqual(512L, index.GetProperty("delta_bytes").GetInt64(), "json index.delta_bytes");
         AssertEqual(0, document.RootElement.GetProperty("verify").GetProperty("differences").GetInt32(), "json verify.differences");
         AssertEqual(180L, document.RootElement.GetProperty("root").GetProperty("size").GetInt64(), "json root.size");
     }

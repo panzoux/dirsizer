@@ -20,6 +20,11 @@ sealed class VolumeIndex(VolumeIdentity identity, ulong journalId, long nextUsn,
     public Dictionary<ulong, FileRecord> Records { get; } = records;
     public RelationshipResult? Relationships { get; set; }
 
+    // The SHA-256 trailer of the base file this index was loaded from or last fully saved to (null: none), and the
+    // record numbers whose entries changed since then. Together they let a run save only a delta (IndexFile.SaveDelta).
+    public byte[]? BaseHash { get; set; }
+    public SortedSet<ulong> Dirty { get; } = new();
+
     // Resolves parents and names and aggregates directory sizes from scratch, with the shared stages a scan uses.
     public void Recompute()
     {

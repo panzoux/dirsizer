@@ -35,6 +35,12 @@ static partial class IndexSelfTests
             new("update: an unreadable extension record asks for a full scan", UnreadableExtensionAsksForARebuild),
             new("update: NTFS metadata records are read again without journal entries", MetadataRecordsAreAlwaysReread),
             new("validity: identity and journal rules decide between update and full scan", ValidityRulesDecideBetweenUpdateAndRebuild),
+            new("delta: only the changes are written, and they load on top of the base", DeltaHoldsOnlyTheChangesAndLoadsOnTopOfTheBase),
+            new("delta: changes accumulate across runs", DeltaAccumulatesAcrossRuns),
+            new("delta: a full save drops it; a delta of an older base is ignored", FullSaveDropsTheDeltaAndAStaleDeltaIsIgnored),
+            new("delta: a damaged delta is rejected", DamagedDeltaIsRejected),
+            new("delta: used only while it stays small", DeltaIsUsedOnlyWhileItStaysSmall),
+            new("update: the entries it replaced or removed are recorded", UpdateRecordsWhichEntriesChanged),
         };
 
         var failed = 0;

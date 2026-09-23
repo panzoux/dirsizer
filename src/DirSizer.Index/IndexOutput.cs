@@ -23,7 +23,7 @@ static class IndexOutput
         if (options.Benchmark)
         {
             var t = run.Timings;
-            error.WriteLine($"benchmark: mode={run.Mode}, records={run.RecordCount}, index_bytes={run.IndexBytes}, load_ms={Ms(t.Load):F1}, usn_ms={Ms(t.Usn):F1}, " +
+            error.WriteLine($"benchmark: mode={run.Mode}, records={run.RecordCount}, index_bytes={run.IndexBytes}, save_kind={run.SaveKind}, delta_records={run.DeltaRecords}, delta_bytes={run.DeltaBytes}, load_ms={Ms(t.Load):F1}, usn_ms={Ms(t.Usn):F1}, " +
                 $"update_ms={Ms(t.Update):F1}, scan_ms={Ms(t.Scan):F1}, recompute_ms={Ms(t.Recompute):F1}, save_ms={Ms(t.Save):F1}, query_ms={Ms(t.Query):F1}, " +
                 $"verify_ms={Ms(t.Verify):F1}, total_ms={Ms(t.Total):F1}");
         }
@@ -61,7 +61,7 @@ static class IndexOutput
         return new JsonIndexOutput(
             result.Volume, top, "logical", Item(result.Root), Items(result.RootChildren), Items(result.Directories), Items(result.Files),
             new JsonIndexStatistics(result.DirectoriesScanned, result.FileCount),
-            new JsonIndexInfo(run.Mode, run.RebuildReason, run.IndexPath, run.Saved, run.Stable ? "stable" : "unstable", run.RecordCount, run.IndexBytes,
+            new JsonIndexInfo(run.Mode, run.RebuildReason, run.IndexPath, run.Saved, run.Stable ? "stable" : "unstable", run.RecordCount, run.IndexBytes, run.SaveKind, run.DeltaRecords, run.DeltaBytes,
                 run.JournalId, run.NextUsn, update?.Changes ?? 0, update?.Reread ?? 0, update?.Replaced ?? 0, update?.Removed ?? 0, update?.ExtensionReads ?? 0,
                 Ms(t.Load), Ms(t.Usn), Ms(t.Update), Ms(t.Scan), Ms(t.Recompute), Ms(t.Save), Ms(t.Query), Ms(t.Verify), Ms(t.Total)),
             run.Verify is null ? null : new JsonVerify(run.Verify.Differences, run.Verify.Samples));
@@ -81,7 +81,7 @@ sealed record JsonIndexOutput(string Path, int Top, string SizeMode, JsonItem Ro
     JsonIndexStatistics Statistics, JsonIndexInfo Index,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonVerify? Verify = null);
 sealed record JsonIndexStatistics(long Directories, long Files);
-sealed record JsonIndexInfo(string Mode, string? RebuildReason, string File, bool Saved, string ScanStability, int Records, long IndexBytes,
+sealed record JsonIndexInfo(string Mode, string? RebuildReason, string File, bool Saved, string ScanStability, int Records, long IndexBytes, string SaveKind, int DeltaRecords, long DeltaBytes,
     ulong JournalId, long NextUsn, int UsnChanges, int RecordsReread, int RecordsReplaced, int RecordsRemoved, int ExtensionReads,
     double LoadMs, double UsnMs, double UpdateMs, double ScanMs, double RecomputeMs, double SaveMs, double QueryMs, double VerifyMs, double TotalMs);
 sealed record JsonVerify(int Differences, string[] Samples);

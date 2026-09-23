@@ -36,9 +36,10 @@ try {
     foreach ($run in 1..$Runs) { "full run ${run}/${Runs}"; $full += , (Invoke-Index @('--rebuild')) }
     foreach ($run in 1..$Runs) { "incremental run ${run}/${Runs}"; $incremental += , (Invoke-Index @()) }
     foreach ($row in $incremental) { if ($row.mode -ne 'incremental') { throw "an incremental run did a full scan: $($row.rebuild_reason)" } }
+    'incremental runs saved as: ' + (($incremental | ForEach-Object { $_.save_kind }) -join ', ')
     ''
     "$Runs full and $Runs incremental runs on $target (min / median / max; milliseconds unless the name says otherwise)"
-    foreach ($field in 'load_ms', 'usn_ms', 'update_ms', 'scan_ms', 'recompute_ms', 'save_ms', 'query_ms', 'total_ms', 'usn_changes', 'records_reread', 'records', 'index_bytes') {
+    foreach ($field in 'load_ms', 'usn_ms', 'update_ms', 'scan_ms', 'recompute_ms', 'save_ms', 'query_ms', 'total_ms', 'usn_changes', 'records_reread', 'records', 'index_bytes', 'delta_records', 'delta_bytes') {
         $f = Get-Stats ($full | ForEach-Object { $_.$field })
         $i = Get-Stats ($incremental | ForEach-Object { $_.$field })
         '{0,-15} FULL {1,14:N1} / {2,14:N1} / {3,14:N1}    INCREMENTAL {4,14:N1} / {5,14:N1} / {6,14:N1}' -f $field, $f.Min, $f.Median, $f.Max, $i.Min, $i.Median, $i.Max

@@ -4,9 +4,11 @@
 
 .DESCRIPTION
   Covers the full scan, incremental updates after real changes (checked against a fresh scan with --verify), and the
-  fallbacks to a full scan: journal recreated, journal disabled, damaged index file, --rebuild. One step creates empty
-  files until $MFT grows (NTFS writes no journal entry for that, so it checks the metadata re-reads); the MFT never
-  shrinks, so every run leaves it somewhat larger.
+  fallbacks to a full scan: journal recreated, journal disabled, damaged index file, --rebuild. Incremental runs with
+  few changes save only a delta file; the checks say which kind of save each run made. One step creates empty files
+  until $MFT grows (NTFS writes no journal entry for that, so it checks the metadata re-reads; it is also more changes
+  than a delta may hold, so those runs save the whole index). The MFT never shrinks, so every run leaves it somewhat
+  larger.
   Writes only inside <Volume>\index-test. It deletes and recreates the volume's USN journal to test the fallbacks; at
   the end the journal is active (with a new id). Index files go to a temporary directory. Refuses volumes that are not
   NTFS or not labelled NTFSTEST (-AllowAnyLabel overrides). Needs an elevated shell and a Release build. Nothing else
@@ -47,6 +49,11 @@ function Check-Mode($Result, [string]$Mode, [string]$Name) {
 function Check-Verified($Result, [string]$Name) {
     Check "${Name}: verify 0 differences, exit 0" ($Result.Exit -eq 0 -and $Result.Json.verify.differences -eq 0) "exit=$($Result.Exit) $($Result.Stderr)"
 }
+function Check-Saved($Result, [string]$Kind, [string]$Name) {
+    Check "${Name}: saved as $Kind" ($Result.Json.index.save_kind -eq $Kind) "save_kind=$($Result.Json.index.save_kind) delta_records=$($Result.Json.index.delta_records)"
+    $deltaExists = Test-Path -LiteralPath "$($Result.Json.index.file).delta"
+    Check "${Name}: delta file $(if ($Kind -eq 'delta') { 'written' } else { 'absent' })" ($deltaExists -eq ($Kind -eq 'delta'))
+}
 function Write-Bytes([string]$Path, [int]$Size) {
     $null = New-Item -ItemType Directory -Force (Split-Path $Path)
     [IO.File]::WriteAllBytes($Path, [byte[]]::new($Size))
@@ -75,6 +82,10 @@ try {
     if (Test-Path $root) { Remove-Item -Recurse -Force $root }
     if (-not (Test-Journal)) { "creating a USN journal on $Volume"; Set-Journal $true }
 
+    # In the base file from the first run, and deleted later: a delta must then remove it (records created after the
+    # base file and deleted again never reach a delta's removed list).
+    Write-Bytes "$root\in-base\gone\g.bin" 4321
+
     '--- first run: full scan, index saved'
     $r = Invoke-Index "$Volume\" @('--verify')
     Check-Mode $r 'full' 'first run'
@@ -82,11 +93,13 @@ try {
     Check 'first run: saved' ($r.Json.index.saved -eq $true)
     Check 'first run: journal id recorded' ($r.Json.index.journal_id -ne 0)
     Check-Verified $r 'first run'
+    Check-Saved $r 'full' 'first run'
 
     '--- no changes: incremental'
     $r = Invoke-Index "$Volume\" @('--verify')
     Check-Mode $r 'incremental' 'no changes'
     Check-Verified $r 'no changes'
+    Check-Saved $r 'delta' 'no changes'
 
     '--- created: files, directories, and a file with 20 long hard links (its names need extension records)'
     Write-Bytes "$root\plain\a.bin" 1000
@@ -104,21 +117,31 @@ try {
     $r = Invoke-Index "$Volume\" @('--verify')
     Check-Mode $r 'incremental' 'after creating'
     Check-Verified $r 'after creating'
+    Check-Saved $r 'delta' 'after creating'
     Check 'after creating: journal entries applied' ($r.Json.index.usn_changes -gt 0) "usn_changes=$($r.Json.index.usn_changes)"
     Check 'after creating: extension records read' ($r.Json.index.extension_reads -gt 0) "extension_reads=$($r.Json.index.extension_reads)"
 
-    '--- edited: grow, shrink, rename, move, delete a tree, grow a linked file, drop a link'
+    '--- edited: grow, shrink, rename, move, delete two trees (one in the base file), grow a linked file, drop a link'
     [IO.File]::WriteAllBytes("$root\plain\a.bin", [byte[]]::new(3000))
     [IO.File]::WriteAllBytes("$root\plain\sub\c.bin", [byte[]]::new(10))
     Rename-Item "$root\plain\sub\b.bin" 'b-renamed.bin'
     Move-Item "$root\move-me" "$root\plain\moved"
     Remove-Item -Recurse -Force "$root\doomed"
+    Remove-Item -Recurse -Force "$root\in-base\gone"
     [IO.File]::AppendAllText("$root\links\${longName}3.bin", ('x' * 1000))
     Remove-Item "$root\links\${longName}5.bin"
     $r = Invoke-Index "$Volume\" @('--verify')
     Check-Mode $r 'incremental' 'after editing'
     Check-Verified $r 'after editing'
+    Check-Saved $r 'delta' 'after editing'
     Check 'after editing: records removed' ($r.Json.index.records_removed -gt 0) "records_removed=$($r.Json.index.records_removed)"
+
+    '--- reloaded without further changes: base + delta alone must equal the volume'
+    # Right after the edits, before new files can reuse the freed MFT records and so hide a removal the delta lost.
+    $r = Invoke-Index "$Volume\" @('--verify')
+    Check-Mode $r 'incremental' 'reloaded'
+    Check-Verified $r 'reloaded'
+    Check-Saved $r 'delta' 'reloaded'
 
     '--- $MFT grows (no journal entry for $MFT itself), then its new records are deleted again'
     $slots = Get-MftSlots
@@ -132,11 +155,17 @@ try {
     $r = Invoke-Index "$Volume\" @('--verify')
     Check-Mode $r 'incremental' 'after $MFT grew'
     Check-Verified $r 'after $MFT grew'
+    Check-Saved $r 'full' 'after $MFT grew (more changes than a delta may hold)'
     Remove-Item -Recurse -Force "$root\many"
     $r = Invoke-Index "$Volume\" @('--verify')
     Check-Mode $r 'incremental' 'after deleting them'
     Check-Verified $r 'after deleting them'
+    Check-Saved $r 'full' 'after deleting them'
     Check 'after deleting them: records removed' ($r.Json.index.records_removed -ge $created) "records_removed=$($r.Json.index.records_removed) created=$created"
+    $r = Invoke-Index "$Volume\" @('--verify')
+    Check-Mode $r 'incremental' 'after a full save of an incremental run'
+    Check-Verified $r 'after a full save of an incremental run'
+    Check-Saved $r 'delta' 'after a full save of an incremental run'
 
     '--- journal recreated: full scan, then incremental again'
     $oldJournal = $r.Json.index.journal_id

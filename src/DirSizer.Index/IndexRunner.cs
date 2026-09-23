@@ -12,9 +12,11 @@ sealed class IndexTimings
 // records read through attribute lists. RebuildReason is set when the update could not be completed.
 sealed record UpdateResult(int Changes, int Reread, int Replaced, int Removed, int ExtensionReads, string? RebuildReason);
 
+// SaveKind: "full" (the whole base file), "delta" (only the entries changed since it, DeltaRecords of them) or "none".
 sealed record IndexRun(
     UnifiedScanResult Result, string Mode, string? RebuildReason, string IndexPath, long IndexBytes, bool Saved, bool Stable,
-    int RecordCount, ulong JournalId, long NextUsn, UpdateResult? Update, VerifyResult? Verify, IndexTimings Timings)
+    int RecordCount, ulong JournalId, long NextUsn, UpdateResult? Update, VerifyResult? Verify, IndexTimings Timings,
+    string SaveKind = "none", int DeltaRecords = 0, long DeltaBytes = 0)
 {
     // 0 = result written; 2 = --verify found differences; 3 = the full scan was unstable, so the index was not saved.
     public int ExitCode => Verify is { Differences: > 0 } ? 2 : Stable ? 0 : 3;
@@ -65,11 +67,24 @@ static class IndexRunner
         }
 
         var saved = false;
+        var saveKind = "none";
         long indexBytes = 0;
+        long deltaBytes = 0;
         if (!options.NoSave && stable)
         {
             timer.Restart();
-            IndexFile.Save(index, indexPath);
+            // After an incremental run, only the entries changed since the base file are written, while there are few.
+            if (mode == "incremental" && IndexFile.ShouldSaveDelta(index))
+            {
+                IndexFile.SaveDelta(index, indexPath);
+                saveKind = "delta";
+                deltaBytes = new FileInfo(IndexFile.DeltaPathFor(indexPath)).Length;
+            }
+            else
+            {
+                IndexFile.Save(index, indexPath);
+                saveKind = "full";
+            }
             timings.Save = timer.Elapsed;
             saved = true;
             indexBytes = new FileInfo(indexPath).Length;
@@ -90,7 +105,7 @@ static class IndexRunner
         }
         timings.Total = total.Elapsed;
         return new IndexRun(result with { TotalMs = timings.Total.TotalMilliseconds }, mode, reason, indexPath, indexBytes, saved, stable,
-            index.Records.Count, index.JournalId, index.NextUsn, update, verify, timings);
+            index.Records.Count, index.JournalId, index.NextUsn, update, verify, timings, saveKind, saveKind == "delta" ? index.Dirty.Count : 0, deltaBytes);
     }
 
     // Returns null when the index is now current, or the reason a full scan is needed instead.
@@ -105,7 +120,7 @@ static class IndexRunner
         if (next is null) return "the USN journal no longer holds the saved position (it wrapped)";
 
         timer.Restart();
-        update = IndexUpdater.Apply(index.Records, changes, IndexUpdater.MetadataRecords(index.Records), new FsctlRecordSource(handle, data.RecordSize, data.BytesPerCluster));
+        update = IndexUpdater.Apply(index.Records, changes, IndexUpdater.MetadataRecords(index.Records), new FsctlRecordSource(handle, data.RecordSize, data.BytesPerCluster), index.Dirty);
         timings.Update = timer.Elapsed;
         if (update.RebuildReason is not null) return update.RebuildReason;
 

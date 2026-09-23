@@ -62,7 +62,8 @@ sealed class IndexOptions
 
             The first run reads the whole $MFT (like dirsizer-mft) and saves an index of the volume. Later
             runs load it, read the USN change journal from where it left off, and read again only the MFT
-            records the journal names. A full scan runs instead, with the reason on stderr, when there is no
+            records the journal names; while few records changed, they save only those, as <file>.delta
+            next to the index. A full scan runs instead, with the reason on stderr, when there is no
             usable index: none yet, another volume, the journal was recreated, wrapped or disabled, or the
             file is damaged. Changes made while the volume was used by a system that does not write the USN
             journal (another operating system) are not seen: use --rebuild after that.
