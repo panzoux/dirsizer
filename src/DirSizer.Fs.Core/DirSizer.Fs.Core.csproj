@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The dirsizer.exe / dirsizer-fs.exe scan engine: any filesystem, no elevation. Referenced by the
+       dedicated dirsizer-fs.exe host and by the unified dirsizer.exe's FileSystemStrategy. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- dirsizer-fs.exe's own host, and the unified dirsizer.exe's FileSystemStrategy adapter, both need
+         internal types here (FsResult.Counters, FsOptions.Strict, etc.): this is a library split out of what
+         used to be one assembly, not a change to which types are meant to be a public API of this engine. -->
+    <InternalsVisibleTo Include="dirsizer-fs" />
+    <InternalsVisibleTo Include="dirsizer" />
+  </ItemGroup>
+</Project>
