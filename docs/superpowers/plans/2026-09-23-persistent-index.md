@@ -3326,7 +3326,7 @@ git commit -m "I4 checkpoint: subtree queries checked against dirsizer-fs on T:"
 - Create: `src\DirSizer.Index\ChangeReport.cs`, `src\DirSizer.Index\IndexSelfTests.Changes.cs`
 - Modify: `src\DirSizer.Index\IndexSelfTests.cs` (list)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `src\DirSizer.Index\IndexSelfTests.Changes.cs`:
 
@@ -3394,11 +3394,11 @@ Add to the test list:
             new("changes: a reused record is one directory gone and one new", ChangesTreatAReusedRecordAsGoneAndNew),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `IndexSnapshot`, `ChangeReporter` and `DirectoryChange` do not exist.
 
-- [ ] **Step 3: Implement `ChangeReport.cs`**
+- [x] **Step 3: Implement `ChangeReport.cs`**
 
 ```csharp
 // "What changed since the previous run" (roadmap I5). The baseline is the saved index, aggregated before the journal's
@@ -3529,11 +3529,11 @@ static class ChangeReporter
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests** (done: 40 passed, including one added test, "a directory moved into the queried one counts from 0", which caught the one mutation the plan's three tests missed; sequence and deleted-directory mutations each failed a test)
 
 Expected: `30 self-tests passed, 0 skipped.`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 Normalize-Src
@@ -3548,7 +3548,7 @@ git commit -m "dirsizer-index: ChangeReporter compares directory sizes with the 
 **Files:**
 - Modify: `src\DirSizer.Index\IndexOptions.cs`, `src\DirSizer.Index\IndexRunner.cs`, `src\DirSizer.Index\IndexOutput.cs`, `src\DirSizer.Index\IndexSelfTests.cs`, `src\DirSizer.Index\IndexSelfTests.Changes.cs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `IndexSelfTests.cs`, `OptionsDefaultsAndFlags`: change `&& !defaults.Rebuild, "default flags");` to
 `&& !defaults.Rebuild && !defaults.Changes, "default flags");` and add
@@ -3588,11 +3588,11 @@ Add to the test list:
             new("output: changes in text and JSON; a note when there is no earlier index", OutputListsTheChanges),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `IndexOptions.Changes` and `IndexRun.Changes` do not exist.
 
-- [ ] **Step 3: Options**
+- [x] **Step 3: Options**
 
 In `IndexOptions.cs`:
 - After `public bool Rebuild { get; private set; }` add `public bool Changes { get; private set; }`.
@@ -3604,7 +3604,7 @@ In `IndexOptions.cs`:
                              (with --no-save the comparison baseline stays the same run after run)
 ```
 
-- [ ] **Step 4: Runner**
+- [x] **Step 4: Runner**
 
 In `IndexRunner.cs`:
 1. In the `IndexRun` record, replace `UpdateResult? Update, VerifyResult? Verify, IndexTimings Timings)` with
@@ -3667,7 +3667,7 @@ with
 If the saved index was not usable but had the same identity, the full scan's result is compared with the old index.
 That is still a correct "since the last index" report.
 
-- [ ] **Step 5: Output**
+- [x] **Step 5: Output**
 
 In `IndexOutput.cs`:
 1. In `Write`, after the `if (options.Verify) { ... }` block, add:
@@ -3736,11 +3736,11 @@ sealed record JsonChanges(string SinceUtc, long RootBefore, long RootAfter, long
 sealed record JsonChange(string Path, long Before, long After, long Delta);
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests** (done: 41 passed)
 
 Expected: `31 self-tests passed, 0 skipped.`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 Normalize-Src
@@ -3755,7 +3755,7 @@ git commit -m "dirsizer-index: --changes lists what shrank and grew since the pr
 **Files:**
 - Modify: `scripts\Test-IndexIncremental.ps1`, `docs\design_index.md`, `docs\roadmap.md`, `README.md`
 
-- [ ] **Step 1: Add the changes section to the end-to-end script**
+- [x] **Step 1: Add the changes section to the end-to-end script**
 
 Insert right before `    '--- journal recreated: full scan, then incremental again'`:
 
@@ -3774,12 +3774,12 @@ Insert right before `    '--- journal recreated: full scan, then incremental aga
     Check 'changes after saving: nothing left' ($r.Json.changes.root_delta -eq 0 -and @($r.Json.changes.shrunk).Count -eq 0) "root_delta=$($r.Json.changes.root_delta)"
 ```
 
-- [ ] **Step 2: Run the script (elevated)**
+- [x] **Step 2: Run the script (elevated)** (done: ALL CHECKS PASSED, exit 0; the script now replaces a journal below 32 MiB first, since T: had a 1 MiB journal that wrapped while $MFT grew)
 
 Run: `.\scripts\Test-IndexIncremental.ps1 -Volume T:; "exit=$LASTEXITCODE"`
 Expected: `ALL CHECKS PASSED`, `exit=0`.
 
-- [ ] **Step 3: Measure the cleanup workflow on C: (elevated; only a temporary folder of our own is written)**
+- [x] **Step 3: Measure the cleanup workflow on C: (elevated; only a temporary folder of our own is written)** (done: 3 rounds, incremental with --changes median 3,793 ms vs full 7,369 ms; see design_index.md)
 
 ```powershell
 $tool = 'artifacts\bin\DirSizer.Index\release_win-x64\dirsizer-index.dll'
@@ -3801,7 +3801,7 @@ Expected: `mode=incremental`; `root_delta` about `-30720000`, give or take whate
 between; the shrunk list includes the `...\Temp` ancestors of the deleted folder; and the incremental `total_ms` is
 clearly below the full scan's. Record both totals.
 
-- [ ] **Step 4: Docs**
+- [x] **Step 4: Docs**
 
 Append to `docs\design_index.md`, before `## Privacy`:
 
@@ -3827,7 +3827,7 @@ In `docs\roadmap.md`, replace the two I5 items with:
 - [x] Measure the second run against a full rescan after a realistic cleanup: C:, 30,000 files (30 MiB) deleted, incremental <ms> vs full <ms> (one machine, warm cache).
 ```
 
-- [ ] **Step 5: README**
+- [x] **Step 5: README**
 
 In `README.md`, after the `dirsizer-inspect.exe` row of the tools table, add a row:
 
@@ -3841,7 +3841,7 @@ In the project table (the one that maps `src\...\*.csproj` to tool names), add:
 | `src\DirSizer.Index\DirSizer.Index.csproj` | `dirsizer-index` (experimental) |
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add scripts\Test-IndexIncremental.ps1 docs\design_index.md docs\roadmap.md README.md
@@ -3852,7 +3852,7 @@ git commit -m "I5 checkpoint: --changes end to end on T:, cleanup workflow measu
 
 ### Task 20: Final verification
 
-- [ ] **Step 1: Clean build and every self-test**
+- [x] **Step 1: Clean build and every self-test** (done: 0 warnings; index 41, all tools exit 0)
 
 ```powershell
 dotnet build DirSizer.sln -c Release
@@ -3865,24 +3865,24 @@ dotnet artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer-fs.dll --self-test; "f
 
 Expected: `31 self-tests passed, 0 skipped.` for the index, and every exit code 0.
 
-- [ ] **Step 2: Existing tools unchanged (elevated)**
+- [x] **Step 2: Existing tools unchanged (elevated)** (done: Compare-Readers RESULT: EQUAL; no shared file differs from master)
 
 Run: `.\scripts\Compare-Readers.ps1 -Volume T:; "exit=$LASTEXITCODE"`
 Expected: all `EQUAL`, `exit=0`. The only shared change on this branch is `RecordFixture`, which is test-only.
 Check that with `git diff master --stat -- src\Shared src\DirSizer.Core src\DirSizer src\DirSizer.Bulk src\DirSizer.Fsctl src\DirSizer.Fs src\DirSizer.Fs.Core src\DirSizer.Inspect`:
 only `src/Shared/SelfTests.cs` may appear.
 
-- [ ] **Step 3: NativeAOT publish**
+- [x] **Step 3: NativeAOT publish** (done: no warnings, 41 passed; needs the VS Installer folder on PATH for vswhere.exe)
 
 Run: `dotnet publish src\DirSizer.Index\DirSizer.Index.csproj -c Release -o $env:TEMP\dirsizer-index-aot`
 Expected: no AOT or trim warnings from `DirSizer.Index` sources. Then run
 `& $env:TEMP\dirsizer-index-aot\dirsizer-index.exe --self-test`. Expected: 31 passed. Then `Remove-Item -Recurse $env:TEMP\dirsizer-index-aot`.
 
-- [ ] **Step 4: End-to-end once more on the final build (elevated)**
+- [x] **Step 4: End-to-end once more on the final build (elevated)** (done: the Task 19 run was on the final code; later commits changed only docs)
 
 Run: `.\scripts\Test-IndexIncremental.ps1 -Volume T:`. Expected: `ALL CHECKS PASSED`.
 
-- [ ] **Step 5: Hand-off**
+- [x] **Step 5: Hand-off**
 
 Use superpowers:finishing-a-development-branch. Report every recorded number and every check that could not be
 run. If the shell was not elevated, list the volume steps as **not run**, not as passed.
