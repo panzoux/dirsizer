@@ -165,9 +165,10 @@ redundant probe** before calling the real, untouched scan entry point:
 // MftScanner.Scan, sketch:
 try { using var probe = BulkNative.OpenVolume($"\\\\.\\{drive}"); }
 catch (Win32Exception cause) { throw new StrategyUnavailableException("mft", cause); }
-// Past this point, nothing here is caught specially: BulkScanner.Scan runs exactly as it does for
-// dirsizer-mft.exe, including its own internal (unmodified) call to the same OpenVolume/EnableBackupPrivilege.
-return Adapt(BulkScanner.Scan(settings));
+// Past this point, nothing here is caught specially: BulkIntegration.Run runs exactly as it does for
+// dirsizer-mft.exe (it is the same call that tool's Program.cs makes), including its own internal (unmodified)
+// call to BulkScanner.Scan and, inside that, the same OpenVolume/EnableBackupPrivilege.
+return Adapt(BulkIntegration.Run(options));
 ```
 
 The probe's own handle is opened and immediately closed (`using`); the real scan then opens its own handle
@@ -177,12 +178,14 @@ probe). In exchange: zero risk to existing dedicated-executable behavior, and th
 unambiguous by construction — it is *only* ever the wrapper's own probe call, nothing inside the black-box
 `BulkScanner.Scan`/`Scanner.Run` calls is inspected or intercepted.
 
-**Everything from `BulkScanner.Scan`/`Scanner.Run` onward is a real result or a real error, full stop**, exactly
-as it is for the dedicated executables today. In particular: `BulkScanOutcome`'s `Change`/`Attempts` (the
-existing MFT-layout-changed / `UNSTABLE` signal) is an ordinary returned value, not an exception — nothing here
-touches that. A later FSCTL call failing partway through a real scan, a corrupt record, a later access-denied on
-a specific file — all of these propagate as errors exactly as they do in the dedicated executables today,
-because that code path is, byte for byte, the same code path. The selector's `catch` clause is narrow
+**Everything from `BulkIntegration.Run`/`Scanner.Run` onward is a real result or a real error, full stop**,
+exactly as it is for the dedicated executables today (`BulkIntegration.Run` is precisely what
+`dirsizer-mft.exe`'s own `Program.cs` calls). In particular: `BulkScanOutcome`'s `Change`/`Attempts` (the
+existing MFT-layout-changed / `UNSTABLE` signal, already folded into `ScanResult`'s `ExitCode` and `Details` by
+`BulkIntegration.Run`) is an ordinary returned value, not an exception — nothing here touches that. A later
+FSCTL call failing partway through a real scan, a corrupt record, a later access-denied on a specific file — all
+of these propagate as errors exactly as they do in the dedicated executables today, because that code path is,
+byte for byte, the same code path. The selector's `catch` clause is narrow
 (`catch (StrategyUnavailableException)` around the call into each strategy's `Scan` method), and
 `StrategyUnavailableException` can only ever originate from the two probe call sites above.
 
@@ -198,21 +201,25 @@ against `OpenVolume`) relative to a full MFT scan, to confirm it is negligible r
 
 ## Strategies
 
-### `MftScanner` (Step 2)
+### `MftScanner` (Step 2) and `NtfsFsctlScanner` (Step 3) share one adapter
 
-Wraps `BulkScanner.Scan` unchanged. NTFS only, raw `$MFT` read, read-only, existing stability detection and
-one-time retry, existing `UNSTABLE` result reporting — none of this is redesigned. `dirsizer-bulk.exe` is renamed
-to `dirsizer-mft.exe` in this step (its `DirSizer.Bulk.csproj`'s `AssemblyName` changes; the project folder name
-is left as `DirSizer.Bulk` — renaming the folder too is cosmetic churn with no behavioral value and is not done
-here, matching how `DirSizer.Fs`'s folder name does not change in Step 1 either, only its `AssemblyName`).
+`BulkIntegration.Run(Options)` (`DirSizer.Bulk`) already converts `BulkScanner.Scan`'s lower-level
+`BulkScanOutcome` into `ScanResult` — the **same shared type** (`src\Shared\Cli.cs`) that `Scanner.Run()`
+(FSCTL, `FsctlScanner.cs`) returns directly. This was traced in the existing code while writing this plan, not
+assumed: `dirsizer-bulk.exe` and `dirsizer-fsctl.exe` already present their results through identical
+`Output.Write(ScanResult, Options)` code today. So `MftScanner.Scan` calls `BulkIntegration.Run` (not
+`BulkScanner.Scan` directly — unchanged either way, including its console progress/warning output, which
+`dirsizer.exe` inherits as-is), `NtfsFsctlScanner.Scan` calls `new Scanner(options).Run()`, and **one** shared
+`ScanResult → UnifiedScanResult` adapter (in `DirSizer.Core`, alongside `StrategyUnavailableException`) serves
+both — not two separate adapters as an earlier draft of this section implied.
 
-### `NtfsFsctlScanner` (Step 3)
-
-Wraps `Scanner.Run()` from `FsctlScanner.cs` (`DirSizer.Fsctl`) unchanged. `FsctlScanner.cs` moves from
-`src\DirSizer.Fsctl\` into `src\Shared\` (mirroring where `BulkReader.cs` already lives), so both `DirSizer.Fsctl`
-(the dedicated `dirsizer-fsctl.exe`, unchanged behavior) and the new unified project can compile the same source
-without duplication. `dirsizer-fsctl.exe`'s name is unchanged (it already names the mechanism, not "ntfs" or
-similar, so there is nothing to rename).
+`dirsizer-bulk.exe` is renamed to `dirsizer-mft.exe` in Step 2 (its `DirSizer.Bulk.csproj`'s `AssemblyName`
+changes; the project folder name is left as `DirSizer.Bulk` — renaming the folder too is cosmetic churn with no
+behavioral value, matching how `DirSizer.Fs`'s folder name does not change in Step 1 either, only its
+`AssemblyName`). In Step 3, `FsctlScanner.cs` moves from `src\DirSizer.Fsctl\` into `src\Shared\` (mirroring
+where `BulkReader.cs` already lives), so both `DirSizer.Fsctl` (the dedicated `dirsizer-fsctl.exe`, unchanged
+behavior) and the new unified project can compile the same source without duplication. `dirsizer-fsctl.exe`'s
+name is unchanged (it already names the mechanism, not "ntfs" or similar, so there is nothing to rename).
 
 ### `FileSystemScanner`
 
@@ -257,14 +264,17 @@ readonly record struct UnifiedItem(string Path, long Size);
 sealed record UnifiedScanOptions(int Top, bool Files, bool Dirs, bool Strict, int Workers);
 ```
 
-Each adapter's mapping is small because the three native shapes are already close: `FsResult`'s
-`ResultItem[]`/`Counters` and MFT/FSCTL's `ResultCandidates`/`ScanResult` (built from the same
-`DirSizer.Core.ResultSelector`/`SizeAggregator` pipeline both already share) both reduce to path/size pairs plus
-a handful of counters. `FileSystemScanner`'s adapter maps `Counters.DirectoriesScanned` directly,
-`DirectoriesDenied + DirectoriesFailed` into `Unreadable`; `MftScanner`/`NtfsFsctlScanner`'s adapters map their
-existing `Scanned`/`Skipped` fields the same way (`Skipped` → `Unreadable` — the closest existing analogue to
-"could not be fully accounted for", used consistently even though the underlying reason differs from a denied
-directory). `TotalMs` and the strategy-specific extras that do *not* fit this common shape (`enum_ms_total`,
+There are **two** adapters, not three, per "`MftScanner` (Step 2) and `NtfsFsctlScanner` (Step 3) share one
+adapter" above: `FsResult → UnifiedScanResult` (`FileSystemScanner`'s own) and one shared
+`ScanResult → UnifiedScanResult` (used by both `MftScanner` and `NtfsFsctlScanner`, since they already produce
+the same native type). Both mappings are small because the underlying shapes are already close: `FsResult`'s
+`ResultItem[]`/`Counters` and `ScanResult`'s `FileRecord[]`-based `Directories`/`Files`/`RootChildren` (built
+from the same `DirSizer.Core.ResultSelector`/`SizeAggregator` pipeline MFT and FSCTL already share) both reduce
+to path/size pairs plus a handful of counters. `FileSystemScanner`'s adapter maps `Counters.DirectoriesScanned`
+directly, `DirectoriesDenied + DirectoriesFailed` into `Unreadable`; the shared `ScanResult` adapter maps
+`Scanned`/`Skipped` the same way (`Skipped` → `Unreadable` — the closest existing analogue to "could not be
+fully accounted for", used consistently even though the underlying reason differs from a denied directory).
+`TotalMs` and the strategy-specific extras that do *not* fit this common shape (`enum_ms_total`,
 `entries_per_sec`, the enumerator name and its own fallback fields, MFT's `UNSTABLE`/`Attempts`, and so on) are
 **not** part of `UnifiedScanResult` — a user who needs that level of detail uses the matching dedicated
 executable's own `--benchmark`/`--json`, which is unchanged and already has it. `dirsizer.exe`'s own output is
