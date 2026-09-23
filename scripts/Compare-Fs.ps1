@@ -24,7 +24,7 @@ param(
     [int[]]$Workers = @(1, 2, 4, 8),
     [int]$Runs = 3,
     [string]$Tool = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer.dll'),
-    [string]$BulkTool = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll')
+    [string]$BulkTool = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll')
 )
 $ErrorActionPreference = 'Stop'
 if (-not ($Oracle -or $Bulk -or $Sweep)) { throw 'Choose at least one of -Oracle, -Bulk, -Sweep.' }

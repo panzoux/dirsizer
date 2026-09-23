@@ -65,7 +65,12 @@ The reported metric is logical bytes in the unnamed `$DATA` attribute. The scann
 - [x] Benchmark the NativeAOT builds (verified identical in behaviour first): FSCTL total median 7,213 ms, bulk 4,793 ms, per-pair speedup 1.45x-1.53x (median 1.52x). The JIT builds in the same session gave 1.45x-1.59x (median 1.52x); an earlier JIT session gave 1.42x, so the honest range is 1.4x-1.5x. Per-run `phase_sum == total` is now checked; raw read is a steady ~420 MB/s over 121 reads.
 - [x] Product integration (first as `--reader=fsctl|bulk` in one executable, since split into two tools, see below; the checks in this item were made on that version and repeated after the split with `Compare-Readers.ps1`). The scan, retry, and reporting live in shared files (`BulkScanner.cs`, `BulkReport.cs`); `BulkIntegration.cs` maps the result onto the reference `ScanResult`, so listing and JSON come from the same output code. JSON gained `reader` (always) and a `bulk` object (bulk only). The default output was verified against the frozen baseline at every step (identical, then exactly one added JSON property). Through the CLI, `--reader=fsctl` and `--reader=bulk` are EQUAL on the test volume in JIT and NativeAOT builds (`scripts\Compare-Readers.ps1`, proven able to fail with the ascending-order mutation); exit codes 0 / 1 / 3 verified through the CLI, including the unstable path on a real volume (`Test-BulkInstability.ps1 -Product`). The environment-variable test hooks that make this possible are compiled only into a separate `TestHooks` build configuration; the Release build ignores them (checked: a 2.5 s requested delay is honoured by TestHooks and ignored by Release) and neither the Release DLL nor the NativeAOT executable contains the variable names (checked with a positive control).
 - [x] Failure-path review: unused drive letter, non-drive-root path, missing colon, two volumes, exFAT and RAW volumes, trailing backslash, and bad options give clean `error:` lines and exit 1 in both readers. Fixed two gaps found: bad options crashed with a stack trace (pre-existing, both readers), and the bulk reader reported a non-NTFS volume as `Win32 error 1` instead of naming the file system. Not executed: running without elevation (the `runas` de-elevation did not start the child here; by code review both readers throw a `Win32Exception` with native error 5, which triggers the Administrator hint), and a failing raw read or a corrupt extent map on a real volume (covered by unit tests of the parsers only).
-- [ ] Benchmark a cold file cache and another volume.
+- [x] Benchmark a cold file cache and another volume. Another volume: U: and V: (VHDX, one machine, `Compare-Benchmark.ps1 -Runs 5`, medians). Cold file cache: `C:` after a reboot; a dismount run on a VHDX does not exclude the host's cache of the VHDX file.
+  - Cold `C:` (this machine, JIT Release builds, first scan after a reboot, one reboot and one run per tool): FSCTL total 38,150 ms (query 35,639 ms), bulk 6,086 ms (raw read 3,383 ms, 360 MB/s over 156 reads), speedup 6.27x. Warm `C:` for comparison (JIT, medians above): FSCTL 7,997 ms, bulk 5,617 ms, 1.42x. A cold cache costs FSCTL about 30 s more and bulk about 0.5 s more. One run per tool, so no spread.
+  - U: (2 GiB, 64 KiB clusters, 256 slots) warm: FSCTL 19.0 ms, bulk 35.9 ms, speedup 0.49x; raw read 169 MB/s. With `-ColdDismount`: FSCTL 52.3 ms, bulk 61.3 ms, speedup 0.89x; raw read 173 MB/s.
+  - V: (2 GiB, 4 KiB clusters, fragmented MFT, 100,608 slots) warm: FSCTL 871 ms, bulk 564 ms, speedup 1.51x; raw read 456 MB/s. With `-ColdDismount`: FSCTL 4,267 ms, bulk 539 ms, speedup 7.92x; raw read 461 MB/s.
+  - Conclusion: dismounting empties the NTFS cache (FSCTL gets 2.7x to 4.9x slower), but bulk raw-read MB/s is unchanged (within 3 %), so the host still caches the VHDX file. These are "dismount runs, host cache not excluded", not cold-cache numbers.
+  - Second machine (hardware not described; shipped 0.6.0 NativeAOT `dirsizer-fsctl.exe` / `dirsizer-mft.exe`; two data volumes, T: and U:, about 104,000 MFT slots of 1 KiB each; 3 FSCTL runs, then 3 bulk runs, not alternated): FSCTL cold first run U: 15,561 ms / T: 16,729 ms, warm (mean of runs 2-3) U: 1,293 ms / T: 1,463 ms; bulk median U: 1,316 ms / T: 1,312 ms (all runs 1.2-1.5 s, raw read 97-121 MB/s over 13 reads). Warm speedup 0.98x / 1.12x, so without a cold cache bulk is no faster there; FSCTL cold first run against the bulk median 11.8x / 12.8x. Whether the first bulk run was cold is not established: the FSCTL runs before it warm the $MFT file cache, not the volume reads bulk makes, and its raw read (97 / 106 MB/s) was only a little slower than the later runs. Not measured there: `C:`, alternated pairs.
 - [ ] Define consistency and failure behavior before making the bulk reader the default.
 
 ## P4 - Product layout: three tools
@@ -101,12 +106,110 @@ Specified in [design_fs.md](design_fs.md). Independent of `DirSizer.Core`; none 
 
 Current product state: `dirsizer-fsctl` is the conservative reference, `dirsizer-bulk` is a separate, experimental tool, and there is no automatic fallback between them (and no combined tool that tries bulk and falls back to fsctl). Bulk should become a default candidate only after all of these:
 
-- [ ] Correctness on another NTFS volume (different size, cluster size, or MFT record size) with the same reader-vs-reader comparison.
-- [ ] Correctness with a strongly fragmented MFT (several extents, so the multi-extent and multi-call `ERROR_MORE_DATA` paths run on real data, not only on a small extent map).
+- [x] Correctness on another NTFS volume (different size, cluster size, or MFT record size) with the same reader-vs-reader comparison. U: (VHDX, 2 GiB, 64 KiB clusters, 4 KiB MFT records, `New-TestVolume.ps1`, `New-AbFixture.ps1`; `compact /c` does not compress with 64 KiB clusters, so U: has no compressed file): `Compare-Readers.ps1` EQUAL; `DirSizer.Compare` 0 mismatches over 256 slots (84 in-use records, 15 extension records).
+- [x] Correctness with a strongly fragmented MFT (several extents, so the multi-extent and multi-call `ERROR_MORE_DATA` paths run on real data, not only on a small extent map). V: (VHDX, 2 GiB, 4 KiB clusters, 1 KiB records, `New-FragmentedMft.ps1`, `New-AbFixture.ps1`): 28 MFT extents, 100,608 slots; `Compare-Readers.ps1` EQUAL in 3 runs; `DirSizer.Compare` 0 mismatches over 100,520 in-use records; the extent map read with 32/48/64/100-byte buffers took 28/14/10/6 calls with 27/13/9/5 `ERROR_MORE_DATA` responses and was equal to the normal read.
 - [ ] Failure paths that could not be executed here: a failing raw read, a corrupt extent map on a real volume.
-- [ ] Performance re-measured on more than one machine, and with a cold file cache.
+- [x] Performance re-measured on more than one machine, and with a cold file cache. Cold cache: `C:` of this machine, bulk 6.27x faster than FSCTL. Second machine: two data volumes, bulk about as fast as a warm FSCTL (0.98x-1.12x) and about 12x faster than a cold one (see P3). The advantage of bulk is mainly a cold cache.
 
 Cold-cache and multi-machine numbers are needed to promote it, not to offer it as an option.
+
+## Direction: from a one-shot scanner to a persistent, incremental index
+
+Today every run is a one-shot scan: read the MFT (or walk the tree), aggregate, print, discard. The natural next step is an NTFS metadata index that is built once from the MFT, persisted, and kept current from the USN change journal. The phases below are ordered; each one is only started after the previous one is verified. They are labelled I1-I6 so they do not collide with the P0-P5 sections above.
+
+Implementation plans: I1 in [2026-09-23-i1-finish-current-scanner.md](superpowers/plans/2026-09-23-i1-finish-current-scanner.md); I2-I5 in [2026-09-23-persistent-index.md](superpowers/plans/2026-09-23-persistent-index.md) (an experimental `dirsizer-index.exe`, not a change to `dirsizer.exe`).
+
+```text
+now
+│
+├─ I1  MFT direct scan        → fast, correct one-shot size analysis
+├─ I2  persistent index       → cheaper second and later runs
+├─ I3  USN journal            → incremental update
+├─ I4  subtree query          → analysis of one directory from the shared index
+├─ I5  repeated analysis      → fast before/after comparison around a cleanup
+└─ I6  metadata engine        → candidates only: search, fzf-like search, listing, file manager
+```
+
+### I1 - Finish the current scanner
+
+Do not change the design here; finish what is open. MFT direct scan, whole-volume file/folder aggregation, and the FSCTL cross-check are done (P0-P4); `dirsizer.exe` already picks MFT, FSCTL, or a directory walk automatically. Remaining:
+
+- [x] Correctness and stability on a fragmented MFT (28 extents) and on another volume (see "Promotion criteria" above). A VHDX cannot hold a larger MFT than `C:` has.
+- [x] Performance with a cold file cache and on a second machine (P3). Cold cache on `C:`: FSCTL 38.1 s, bulk 6.1 s. Second machine, two data volumes: warm FSCTL 1.3-1.5 s, cold FSCTL 15.6-16.7 s, bulk 1.3 s.
+
+Deliverable: a fast, correct one-shot NTFS size analyzer.
+
+### I2 - Persistent metadata index
+
+Reuse a previous result without rescanning the MFT.
+
+```text
+MFT scan → in-memory index → on-disk cache
+```
+
+Candidate fields per record: FRN (record number + sequence), parent FRN, name, logical size, directory/file flag, the timestamps actually needed, and volume identity (serial number, MFT geometry). Per volume: the USN journal ID and the last processed USN, recorded at scan time so I3 can resume from it.
+
+No USN-based updates yet. Goal: measure load cost against scan cost, and define when a cache is invalid (different volume serial, journal ID changed or journal deleted, format version changed).
+
+- [ ] Specify the on-disk format, versioning, location, and invalidation rules.
+- [ ] Save and load the index; the loaded result must equal a fresh scan (same comparison style as `Compare-Readers.ps1`).
+- [ ] Measure load time and file size against scan time on `C:`.
+
+### I3 - Incremental update from the USN journal
+
+```text
+initial MFT scan → persistent index → USN journal (create/delete/rename/modify)
+                → index update → folder-size update
+```
+
+Rule: **do not infer the final state from USN events alone.** Use the journal as a change notification and a list of affected FRNs, then establish the current state from the MFT:
+
+```text
+USN event → affected FRN → re-read the MFT record if needed → current state
+```
+
+- [ ] Read the journal from the saved USN; handle journal wrap (`ERROR_JOURNAL_ENTRY_DELETED`), journal recreation (ID change), and a disabled journal by falling back to a full rescan.
+- [ ] Apply create, delete, rename/move (parent change), size change, and hard-link changes; re-read records by FRN instead of trusting event payloads.
+- [ ] Update directory totals after the changes. First recompute the whole index in memory: the result is identical to a scan by construction, and its cost gets measured. Update only the ancestor chains if that cost turns out to dominate an incremental run.
+- [ ] Verify: after a scripted set of changes on the `T:` fixture, the incrementally updated index equals a fresh full scan.
+
+### I4 - Subtree-scoped analysis
+
+Analysing `C:\Users\foo\Downloads` becomes a query on the index: resolve the path to its FRN, take its descendants, aggregate. It is not a separate scanner.
+
+```text
+whole-volume MFT index
+├── C:\Users
+├── D:\Games
+└── E:\Archive
+```
+
+Today a non-root path always uses the directory walk (unified-strategy spec); with an index, any subtree of an indexed volume can be answered without walking it.
+
+- [ ] Path → FRN resolution on the index; subtree totals equal to a fresh scan of that subtree (and explain differences with `dirsizer-fs.exe`, as in design_fs.md).
+- [ ] Share one index across whole-volume and subtree analyses.
+
+### I5 - Fast repeated analysis
+
+The typical cleanup loop is: analyse → delete unwanted files → analyse again. Today the second step is a full MFT scan and a full re-aggregation. With I2-I4 it becomes: previous index → USN delta → update only the changed parts → re-aggregate.
+
+- [ ] Before/after report: which directories shrank or grew, by how much, since the previous run.
+- [ ] Measure the second run against a full rescan after a realistic cleanup.
+
+### I6 - Candidates after the index exists (not planned)
+
+Not planned work. Re-evaluate only after I2-I3 are complete and verified. The same index could serve:
+
+```text
+NTFS index
+├── folder size
+├── file search
+├── fzf-like search
+├── recent files
+└── directory listing
+```
+
+Candidates: file search, fzf-like interactive search, fast directory listing, and eventually a file manager (`zurari for Win`). None of these changes the current purpose of the project, which is folder-size analysis.
 
 ## Deferred semantics
 

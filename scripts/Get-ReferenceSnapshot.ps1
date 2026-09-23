@@ -19,7 +19,8 @@ param(
     [Parameter(Mandatory)][string]$Out
 )
 $ErrorActionPreference = 'Stop'
-if (-not $Path) { $Path = Join-Path $PSScriptRoot "..\artifacts\bin\DirSizer.$((Get-Culture).TextInfo.ToTitleCase($Tool))\release_win-x64\dirsizer-$Tool.dll" }
+# The bulk reader's project is DirSizer.Bulk, but its assembly has been dirsizer-mft since 0.6.0.
+if (-not $Path) { $Path = Join-Path $PSScriptRoot $(if ($Tool -eq 'bulk') { '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll' } else { '..\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll' }) }
 
 $stderrFile = [IO.Path]::GetTempFileName()
 try {
