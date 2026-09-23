@@ -105,6 +105,32 @@ static partial class IndexSelfTests
         AssertThrowsWithMessage<InvalidDataException>(() => IndexFile.Read(future), "version", "a newer format version");
     }
 
+    // The file is parsed while its checksum is computed on another thread, so parsing must survive any damage, and a
+    // damaged file must still be reported by its checksum. Header offsets: time written 52, record count 60.
+    static void ChecksumIsReportedEvenWhenParsingFails()
+    {
+        var bytes = IndexFile.Serialize(Aggregated(SampleRecords()));
+        var hugeCount = (byte[])bytes.Clone();
+        BinaryPrimitives.WriteInt32LittleEndian(hugeCount.AsSpan(60), int.MaxValue);
+        AssertThrowsWithMessage<InvalidDataException>(() => IndexFile.Read(hugeCount), "checksum", "a huge record count behind a wrong checksum");
+    }
+
+    static void DamageBehindAValidChecksumIsInvalidData()
+    {
+        byte[] WithHash(byte[] bytes)
+        {
+            SHA256.HashData(bytes.AsSpan(0, bytes.Length - 32)).CopyTo(bytes, bytes.Length - 32);
+            return bytes;
+        }
+        var bytes = IndexFile.Serialize(Aggregated(SampleRecords()));
+        var hugeCount = (byte[])bytes.Clone();
+        BinaryPrimitives.WriteInt32LittleEndian(hugeCount.AsSpan(60), int.MaxValue);
+        AssertThrowsWithMessage<InvalidDataException>(() => IndexFile.Read(WithHash(hugeCount)), "record count", "a record count the file cannot hold");
+        var badTime = (byte[])bytes.Clone();
+        BinaryPrimitives.WriteInt64LittleEndian(badTime.AsSpan(52), long.MaxValue);
+        AssertThrows<InvalidDataException>(() => IndexFile.Read(WithHash(badTime)), "a time outside DateTime's range");
+    }
+
     static void SaveReplacesTheFileAtomically()
     {
         var directory = Path.Combine(Path.GetTempPath(), "dirsizer-index-test-" + Guid.NewGuid().ToString("N"));

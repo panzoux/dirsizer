@@ -15,6 +15,8 @@ static partial class IndexSelfTests
             new("index file: a loaded index aggregates exactly like the scan that wrote it", LoadedIndexAggregatesLikeTheScan),
             new("index: Recompute can run twice", RecomputeCanRunTwice),
             new("index file: damage, truncation and a newer version are rejected", DamagedIndexFileIsRejected),
+            new("index file: a wrong checksum is reported even when parsing fails", ChecksumIsReportedEvenWhenParsingFails),
+            new("index file: damage behind a valid checksum is InvalidData, never another exception", DamageBehindAValidChecksumIsInvalidData),
             new("index file: saving replaces the file and leaves no temporary file", SaveReplacesTheFileAtomically),
             new("index file: TryLoad says why nothing was loaded", TryLoadExplainsWhy),
             new("verifier: finds size, name, missing, extra, total and reference differences", VerifierFindsEachKindOfDifference),
@@ -40,6 +42,7 @@ static partial class IndexSelfTests
             new("delta: a full save drops it; a delta of an older base is ignored", FullSaveDropsTheDeltaAndAStaleDeltaIsIgnored),
             new("delta: a damaged delta is rejected", DamagedDeltaIsRejected),
             new("delta: used only while it stays small", DeltaIsUsedOnlyWhileItStaysSmall),
+            new("index file: a file of several read pieces loads exactly and is checked piece by piece", LargeFileIsReadAndCheckedPieceByPiece),
             new("update: the entries it replaced or removed are recorded", UpdateRecordsWhichEntriesChanged),
         };
 

@@ -43,6 +43,27 @@ written: the record, or the record number if the entry was removed. `VolumeIndex
 
 JSON `index.save_kind` is `full`, `delta` or `none`, with `delta_records` and `delta_bytes`.
 
+## Loading fast
+
+Loading the base file of `C:` (112 MiB, 924,000 records) took about 1.6 s: reading the file about 0.1-0.25 s, SHA-256
+about 0.6 s (this CPU, an i5-7300U, has no SHA instructions), and parsing about 0.9 s, of which about 0.5 s were
+garbage collections promoting the million objects the parse creates (all of them survive). Changes:
+
+- **Server GC** (`ServerGarbageCollection` in `DirSizer.Index.csproj`, this tool only): GC pauses during the load fell
+  from about 500 ms to about 90 ms. It also made full scans faster (scan 5.8 s to 4.7-5.0 s) and raised the peak working
+  set of a full run from 468 to 598 MiB (an incremental run: 532 to 519 MiB).
+- **Hashing while reading and parsing:** the file is read in 4 MiB pieces into an array that is not zeroed first; a
+  second thread hashes each piece as soon as it is in memory, while the first thread, once the file is read, parses
+  it. The index is returned only after the checksum matched, and a wrong checksum is reported even if parsing failed
+  first. So parsing never trusts the data: every count is bounded by the bytes that could hold it before anything is
+  allocated, and any error is an `InvalidDataException` (a time out of range was an `ArgumentOutOfRangeException` before,
+  and a huge record count an allocation failure, both behind a valid checksum).
+- The file format is unchanged.
+
+SHA-256 is now the floor: the load ends when the last piece is hashed. A non-cryptographic checksum (it only has to
+catch damage, since whoever can write the file can also write a matching SHA-256) would remove most of that, at the cost
+of a format version and a package dependency; not done.
+
 ## When a saved index is not used
 
 The file is ignored and the whole `$MFT` is scanned again when: it does not exist; its checksum, magic or version is
@@ -96,6 +117,7 @@ not list without elevation. In the default location only the user, SYSTEM and Ad
 | C: (I2, warm cache, 3 runs, medians) | 923,854 | 111.6 MiB | 5,843 ms | 2,051 ms | 1,703 ms | 374 ms |
 | C: (I3, warm cache, 3 + 3 runs, medians) | 924,034 | 111.6 MiB | 5,916 ms | 1,743 ms | 1,473 ms | 483 ms |
 | C: (I3 + delta file, warm cache, 3 + 3 runs, medians) | 924,103 | 111.6 MiB | 5,795 ms | 2,155 ms (full) / 7 ms (delta) | 1,508 ms | 480 ms |
+| C: (fast load: server GC, hashing while reading, 3 + 3 runs, medians) | 924,240 | 111.6 MiB | 5,044 ms | 2,299 ms (full) / 7 ms (delta) | 752 ms | 500 ms |
 
 Loading the file and recomputing parents, names and sizes took about 2.1 s, against 5.8 s for the full scan: a reload
 is about 2.8x cheaper than a warm scan on this machine (a cold scan is much slower, see roadmap P3). `--verify` itself
@@ -112,3 +134,7 @@ With the delta file: an incremental run on `C:` took 2,630 ms (median; 7 journal
 delta of 32 entries and 1.8 KB written in 7 ms), 31 % of a full run (8,418 ms). It is now dominated by loading the
 base file (1,508 ms), then `Recompute` (480 ms), the query (365 ms) and re-reading records (275 ms). Same machine,
 build and script as above.
+
+With the fast load: an incremental run on `C:` took 1,939 ms (median), 25 % of a full run (7,809 ms). Load 752 ms,
+`Recompute` 500 ms, query 368 ms, re-reading records 293 ms. Same machine, build and script as above, one day later
+(the unchanged build measured load at 1.6-1.7 s that day).

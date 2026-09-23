@@ -116,6 +116,42 @@ static partial class IndexSelfTests
         });
     }
 
+    // Loading reads the base file in 4 MiB pieces and hashes each piece as it arrives: a file of several pieces must
+    // load exactly, and damage in a later piece or a missing tail must still be caught.
+    static void LargeFileIsReadAndCheckedPieceByPiece()
+    {
+        WithIndexDirectory(path =>
+        {
+            var records = SampleRecords();
+            for (ulong number = 100; number < 120_100; number++)
+            {
+                var record = new FileRecord(Ref(number), 1, false) { LogicalSize = (long)number };
+                record.Names.Add(Name($"file-{number}-{new string('x', 40)}.bin", 30));
+                records[number] = record;
+            }
+            var index = Aggregated(records);
+            IndexFile.Save(index, path);
+            var length = new FileInfo(path).Length;
+            Assert(length > 3 * (4 << 20), $"the file spans several pieces ({length} bytes)");
+
+            var loaded = IndexFile.TryLoad(path, out var problem)!;
+            AssertEqual((string?)null, problem, "loads");
+            AssertEqual(string.Join(',', index.Records.Keys), string.Join(',', loaded.Records.Keys), "record order");
+            AssertSameRecords(index, loaded, "a file of several pieces");
+
+            var bytes = File.ReadAllBytes(path);
+            var damaged = (byte[])bytes.Clone();
+            damaged[3 * (4 << 20) + 5] ^= 0x01;   // inside the fourth piece
+            File.WriteAllBytes(path, damaged);
+            Assert(IndexFile.TryLoad(path, out problem) is null, "damage in a later piece loads nothing");
+            AssertContains(problem, "checksum", "reported by the checksum");
+
+            File.WriteAllBytes(path, bytes[..^1000]);
+            Assert(IndexFile.TryLoad(path, out problem) is null, "a cut-off file loads nothing");
+            AssertContains(problem, "cannot be used", "reason for a cut-off file");
+        });
+    }
+
     static void DeltaIsUsedOnlyWhileItStaysSmall()
     {
         var index = Aggregated(SampleRecords());

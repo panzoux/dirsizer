@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -85,7 +86,7 @@ static class IndexFile
         VolumeIndex index;
         try
         {
-            index = Read(File.ReadAllBytes(path));
+            index = ReadFile(path);
         }
         catch (InvalidDataException exception)
         {
@@ -207,9 +208,100 @@ static class IndexFile
         return body;
     }
 
-    public static VolumeIndex Read(byte[] bytes)
+    // The SHA-256 of a large base file is computed on another thread while this one parses (on C:, hashing 112 MiB
+    // alone took about 600 ms). The index is returned only if the checksum matches, and a wrong checksum is reported
+    // even if parsing failed first, so parsing must survive any damage: it throws only InvalidDataException (anything
+    // else is wrapped), and every count is bounded by the bytes that could hold it before anything is allocated for it.
+    public static VolumeIndex Read(byte[] bytes) => Read(bytes, null);
+
+    // Reads a base file from disk in 4 MiB pieces; each piece is hashed as soon as it is in memory, so reading the file
+    // and hashing it overlap (the array is not zeroed first: only bytes already read are hashed or parsed).
+    public static VolumeIndex ReadFile(string path)
     {
-        var body = CheckedBody(bytes, "index file");
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0, FileOptions.SequentialScan);
+        var length = stream.Length;
+        if (length > Array.MaxLength) throw new InvalidDataException("The index file is too large.");
+        var bytes = GC.AllocateUninitializedArray<byte>((int)length);
+        return Read(bytes, report =>
+        {
+            var offset = 0;
+            while (offset < bytes.Length)
+            {
+                var read = stream.Read(bytes, offset, Math.Min(ReadPiece, bytes.Length - offset));
+                if (read == 0) throw new InvalidDataException("The index file is truncated.");
+                offset += read;
+                report(offset);
+            }
+        });
+    }
+
+    const int ReadPiece = 4 << 20;
+
+    // `fill` (null: the bytes are all there) puts the bytes in place in order and reports how many leading bytes are.
+    static VolumeIndex Read(byte[] bytes, Action<Action<int>>? fill)
+    {
+        if (bytes.Length < HashLength + 8) throw new InvalidDataException("The index file is truncated.");
+        var bodyLength = bytes.Length - HashLength;
+        var filled = new StrongBox<int>(fill is null ? bytes.Length : 0);
+        var failed = new StrongBox<bool>();
+        using var progress = new SemaphoreSlim(0);
+        var hashing = Task.Run(() =>
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var done = 0;
+            while (done < bodyLength)
+            {
+                if (Volatile.Read(ref failed.Value)) return [];
+                var available = Math.Min(Volatile.Read(ref filled.Value), bodyLength);
+                if (available == done)
+                {
+                    progress.Wait();
+                    continue;
+                }
+                hash.AppendData(bytes, done, available - done);
+                done = available;
+            }
+            return hash.GetHashAndReset();
+        });
+        if (fill is not null)
+        {
+            try
+            {
+                fill(count =>
+                {
+                    Volatile.Write(ref filled.Value, count);
+                    progress.Release();
+                });
+            }
+            catch
+            {
+                Volatile.Write(ref failed.Value, true);
+                progress.Release();
+                hashing.Wait();
+                throw;
+            }
+        }
+        VolumeIndex? index = null;
+        Exception? parseError = null;
+        try
+        {
+            index = Parse(bytes.AsSpan(0, bodyLength));
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            parseError = exception;
+        }
+        if (!hashing.Result.AsSpan().SequenceEqual(bytes.AsSpan(bodyLength))) throw new InvalidDataException("The index file checksum does not match.");
+        if (parseError is InvalidDataException invalid) throw invalid;
+        if (parseError is not null) throw new InvalidDataException($"The index file cannot be read: {parseError.Message}", parseError);
+        index!.BaseHash = bytes[^HashLength..];
+        return index;
+    }
+
+    const int MinRecordBytes = 8 + 2 + 1 + 8 + 2;   // a record without names
+
+    static VolumeIndex Parse(ReadOnlySpan<byte> body)
+    {
         var reader = new IndexReader(body);
         if (reader.U32() != Magic) throw new InvalidDataException("Not a dirsizer index file.");
         var version = reader.U32();
@@ -217,9 +309,9 @@ static class IndexFile
         var identity = new VolumeIdentity(reader.I64(), reader.I32(), reader.I64(), reader.I64());
         var journalId = reader.U64();
         var nextUsn = reader.I64();
-        var written = new DateTime(reader.I64(), DateTimeKind.Utc);
+        var written = reader.Time();
         var count = reader.I32();
-        if (count < 0) throw new InvalidDataException("The record count is negative.");
+        if (count < 0 || count > (body.Length - reader.Position) / MinRecordBytes) throw new InvalidDataException($"The record count {count} does not fit the file.");
         var records = new Dictionary<ulong, FileRecord>(count);
         for (var i = 0; i < count; i++)
         {
@@ -227,7 +319,7 @@ static class IndexFile
             if (!records.TryAdd(record.Reference.RecordNumber, record)) throw new InvalidDataException($"Record {record.Reference.RecordNumber} appears twice.");
         }
         if (reader.Position != body.Length) throw new InvalidDataException("There are bytes after the last record.");
-        return new VolumeIndex(identity, journalId, nextUsn, written, records) { BaseHash = bytes[^HashLength..] };
+        return new VolumeIndex(identity, journalId, nextUsn, written, records);
     }
 
     // Applies a delta to the index loaded from its base file. Removals first, then records in ascending order, so a
@@ -242,10 +334,10 @@ static class IndexFile
         if (!reader.Bytes(HashLength).SequenceEqual(index.BaseHash)) return;
         var journalId = reader.U64();
         var nextUsn = reader.I64();
-        var written = new DateTime(reader.I64(), DateTimeKind.Utc);
+        var written = reader.Time();
         var dirty = new SortedSet<ulong>();
         var removed = reader.I32();
-        if (removed < 0) throw new InvalidDataException("The removed count is negative.");
+        if (removed < 0 || removed > (body.Length - reader.Position) / 8) throw new InvalidDataException($"The removed count {removed} does not fit the delta file.");
         var removals = new List<ulong>(removed);
         for (var i = 0; i < removed; i++)
         {
@@ -254,7 +346,7 @@ static class IndexFile
             removals.Add(number);
         }
         var count = reader.I32();
-        if (count < 0) throw new InvalidDataException("The record count is negative.");
+        if (count < 0 || count > (body.Length - reader.Position) / MinRecordBytes) throw new InvalidDataException($"The record count {count} does not fit the delta file.");
         var records = new List<FileRecord>(count);
         for (var i = 0; i < count; i++)
         {
@@ -299,6 +391,13 @@ static class IndexFile
         public ulong U64() => BinaryPrimitives.ReadUInt64LittleEndian(Take(8));
         public long I64() => BinaryPrimitives.ReadInt64LittleEndian(Take(8));
         public ReadOnlySpan<byte> Bytes(int count) => Take(count);
+
+        public DateTime Time()
+        {
+            var ticks = I64();
+            if (ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks) throw new InvalidDataException($"The time written ({ticks} ticks) is out of range.");
+            return new DateTime(ticks, DateTimeKind.Utc);
+        }
         public string Utf16(int characters) => new(MemoryMarshal.Cast<byte, char>(Take(characters * 2)));
     }
 }
