@@ -17,6 +17,7 @@ static class DirSizerSelfTests
             new("--enumerator and other strategy-naming flags are rejected: not part of this CLI", UnifiedCliOptionsRejectsEnumeratorAndStrategyFlags),
             new("options: defaults and the documented set are accepted", UnifiedCliOptionsAcceptsTheDocumentedSet),
             new("selector moves to the next strategy only on StrategyUnavailableException, nothing else", SelectorFallsBackOnlyOnStrategyUnavailable),
+            new("selector tries two levels: mft unavailable, fsctl available", SelectorTriesTwoLevelsOfFallback),
         };
 
         var failed = 0;
@@ -174,5 +175,20 @@ static class DirSizerSelfTests
         {
             AssertEqual("a real scan failure", exception.Message, "case 3: the real exception, not swallowed or replaced");
         }
+    }
+
+    static void SelectorTriesTwoLevelsOfFallback()
+    {
+        // A fake MFT-shaped strategy unavailable, a fake FSCTL-shaped strategy available: proves the chain
+        // tries strategies in order past more than one failure, not just one (Step 3's own new coverage --
+        // Task 7's test above only ever had one failing strategy ahead of the real one).
+        IScanStrategy[] mftUnavailableFsctlAvailable =
+        [
+            new FakeStrategy("mft", () => throw new StrategyUnavailableException("mft", new InvalidOperationException("no access"))),
+            new FakeStrategy("fsctl", () => FixedResult("fsctl")),
+            new FakeStrategy("filesystem", () => throw new Exception("must not be reached: fsctl already succeeded")),
+        ];
+        var result = ScanStrategySelector.Scan("C:\\", new UnifiedScanOptions(25, false, true, false, 0), mftUnavailableFsctlAvailable);
+        AssertEqual("fsctl", result.Strategy, "the second strategy's result is used when the first is unavailable");
     }
 }
