@@ -21,6 +21,10 @@ static partial class IndexSelfTests
             new("query: the whole volume equals the scan's own selection", WholeVolumeQueryMatchesTheScanSelection),
             new("query: a subtree covers only that directory", SubtreeQueryCoversOnlyTheDirectory),
             new("output: text summary line, stderr reason, JSON index and verify objects", OutputHasTheSummaryAndTheIndexObject),
+            new("usn: V2 records are parsed to record numbers", UsnRecordsAreParsed),
+            new("usn: short, undersized and non-V2 records are errors", DamagedUsnRecordsAreErrors),
+            new("usn: reading follows the journal to its end", ReadChangesFollowsTheJournalToItsEnd),
+            new("usn: a wrapped journal gives null; other errors and no progress throw", ReadChangesReportsWrapsAndErrors),
         };
 
         var failed = 0;
