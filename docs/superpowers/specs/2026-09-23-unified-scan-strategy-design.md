@@ -18,22 +18,32 @@ this document                     dirsizer.exe picks A/B/C's whole scan METHOD  
 ## Goal
 
 `dirsizer.exe` becomes the single normal entry point for folder-size scanning. Given a path, it automatically
-selects the fastest **validated** and **available** scan strategy for that path's file system — the user never
-names a backend. Existing result semantics and correctness guarantees are preserved regardless of which strategy
-runs. Dedicated executables (one per strategy) remain available, unchanged in behavior, for users who already
-know which implementation they want, and for diagnosis, benchmarking, and development — `--enumerator` (and any
-future `--strategy`-shaped option) lives on those, as a diagnostic/expert surface, **not** on `dirsizer.exe`.
+selects the best **validated** and **available** scan strategy for that path's file system — the user never
+names a backend. **"Best" here means a fixed, documented preference order (MFT, then FSCTL, then
+`FileSystemScanner`), not a measured claim** — unlike `FileSystemScanner`'s own internal enumerator choice,
+which *is* backed by the `feature/fs-enumerator-benchmark`/`feature/fs-enumerator-default` measurements, MFT vs
+FSCTL vs `FileSystemScanner` has never been benchmarked against each other. The order below is a reasonable
+prior (raw `$MFT` reads and FSCTL both avoid the walk's per-directory syscalls, so both are expected to beat
+`FileSystemScanner` on a large NTFS tree) recorded as a decision to revisit once real numbers exist, not
+asserted as proven — see "Selection policy is a prior, not a measurement" below. Existing result semantics and
+correctness guarantees are preserved regardless of which strategy runs. Dedicated executables (one per strategy)
+remain available, unchanged in behavior, for users who already know which implementation they want, and for
+diagnosis, benchmarking, and development — `--enumerator` (and any future `--strategy`-shaped option) lives on
+those, as a diagnostic/expert surface, **not** on `dirsizer.exe`.
 
 ## Scope of this document, and phasing
 
 One spec, phased implementation (three increments of one feature, not three independent sub-projects — each still
 gets its own build-and-test checkpoint before the next starts, the same shape as the benchmark work):
 
-- **Step 1**: rename today's `dirsizer.exe` to `dirsizer-fs.exe` (pure rename, zero behavior change), extract its
-  engine into a small library, introduce `IScanStrategy` and a `ScanStrategySelector` with exactly one strategy
-  (`FileSystemScanner`) that is always chosen. The new `dirsizer.exe` exists after this step, behaves exactly like
-  `dirsizer-fs.exe` (same CLI, same output — see "Open question carried from Step 1" below), and nothing about NTFS
-  is touched yet.
+- **Step 1**: rename today's `dirsizer.exe` to `dirsizer-fs.exe` (pure rename, zero behavior change to
+  `dirsizer-fs.exe` itself — same CLI, same JSON shape, same 39 self-tests), extract its engine into a small
+  library, introduce `IScanStrategy`/`UnifiedScanResult`/`ScanStrategySelector` with exactly one strategy
+  (`FileSystemScanner`) that is always chosen. The new `dirsizer.exe` exists after this step and always scans the
+  same way `dirsizer-fs.exe` does (same directory walk, same sizes, same counts — no NTFS strategy exists yet to
+  differ from), but its own CLI and output are the smaller, uniform shapes specified below ("Common CLI options",
+  "`IScanStrategy`") from the very start, **not** byte-identical to `dirsizer-fs.exe`'s own richer JSON — see
+  "Testing" for what "no behavior change" is actually checked against in this step.
 - **Step 2**: add `MftScanner` (wraps the existing `dirsizer-bulk` implementation) as a real, selectable strategy.
   `dirsizer-bulk.exe` is renamed to `dirsizer-mft.exe` (naming only, same implementation) as part of this step, not
   before — a bare rename with nothing yet using it would be pointless churn.
@@ -105,6 +115,24 @@ needs this one small piece early. `FsctlScanner.cs` keeps its own local `GetVolu
 its own error-message use until Step 3, when the whole file moves and that duplication is what Step 3 cleans up
 by switching it to call the shared `VolumeInfo.IsNtfs` too.
 
+### Selection policy is a prior, not a measurement
+
+MFT > FSCTL > `FileSystemScanner` is a documented assumption (see "Goal"), not a result. If Step 2/3's
+implementation later measures the three head to head and the order turns out wrong, the fix is a one-line
+change to this policy, not a redesign — the `IScanStrategy` boundary does not encode the ordering anywhere
+else.
+
+**FSCTL's place in the automatic chain may rarely or never actually trigger in practice**, and that is stated
+honestly rather than glossed over: `MftScanner` and `NtfsFsctlScanner`'s availability checks both come down to
+"can this process open `\\.\<drive>:` with `GENERIC_READ`", which needs the same administrator token for both.
+On real hardware, they are available or unavailable *together* — if MFT works, the selector never reaches
+FSCTL; if MFT doesn't, FSCTL almost certainly doesn't either. FSCTL is kept in the selector for two honest
+reasons, not because a real gap between them is known today: (1) architectural future-proofing, in case a
+future Windows version or a locked-down environment ever *does* separate the two capabilities; (2) it is the
+reference implementation and the cheapest possible strategy to wire in, once `MftScanner`'s wiring already
+exists in Step 2 — Step 3 is small precisely because it reuses the same pattern. If this turns out to be dead
+code in practice, that is an acceptable, disclosed outcome of this design, not a hidden one.
+
 ## The availability/failure boundary
 
 This is the one piece of new logic with real correctness risk, so it is specified precisely, the same way
@@ -123,24 +151,39 @@ sealed class StrategyUnavailableException(string strategy, Exception cause) : Ex
 }
 ```
 
-**Exactly two call sites throw it**, both already the first privileged operation their strategy performs today
-(traced in the existing code, not assumed):
+**`BulkNative.OpenVolume`, `EnableBackupPrivilege`, and `Native.OpenVolume` themselves are never modified.** An
+earlier draft of this design had them throw `StrategyUnavailableException` directly — wrong, because those are
+the exact same shared low-level calls `BulkScanner.Scan` and `Scanner.Run` already use internally, which the
+dedicated `dirsizer-mft.exe`/`dirsizer-fsctl.exe` depend on for their own, unrelated, unchanged error handling
+and self-tests. Changing what they throw would be a real behavior change smuggled into "unchanged" executables.
 
-- `BulkNative.OpenVolume` — `src\Shared\BulkReader\BulkReader.cs`, called at `BulkScanner.Scan`'s line 42, before
-  anything else (before `OpenMft`/`EnableBackupPrivilege` at line 48). Opening `\\.\<drive>:` with `GENERIC_READ`
-  needs administrator rights; on a non-elevated token this is the very first thing that fails, before any MFT
-  data has been touched. Wrap: catch the existing `Win32Exception`-throwing helper's failure here specifically
-  (not a blanket try/catch around the whole scan) and re-throw as `StrategyUnavailableException("mft", ...)`.
-- `Native.OpenVolume` — `src\DirSizer.Fsctl\FsctlScanner.cs` (moving to `Shared`, see below), called as the first
-  line of `Scanner.Run()`. Same reasoning, same wrap, `StrategyUnavailableException("fsctl", ...)`.
+Instead, **each new `IScanStrategy` wrapper (`MftScanner`, `NtfsFsctlScanner`) performs its own, separate,
+redundant probe** before calling the real, untouched scan entry point:
 
-**Everything after that point in either strategy is a real result or a real error, full stop.** In particular:
-`BulkScanOutcome`'s `Change`/`Attempts` (the existing MFT-layout-changed / `UNSTABLE` signal) is an ordinary
-returned value, not an exception — it already flows through untouched today, and nothing here changes that. A
-`FSCTL` call failing partway through a real scan, a corrupt record, a later access-denied on a specific file — all
-of these propagate as errors exactly as they do in the dedicated executables today. The selector's `catch` clause
-is narrow (`catch (StrategyUnavailableException)` around the call into each strategy's entry point only), not a
-general exception handler.
+```csharp
+// MftScanner.Scan, sketch:
+try { using var probe = BulkNative.OpenVolume($"\\\\.\\{drive}"); }
+catch (Win32Exception cause) { throw new StrategyUnavailableException("mft", cause); }
+// Past this point, nothing here is caught specially: BulkScanner.Scan runs exactly as it does for
+// dirsizer-mft.exe, including its own internal (unmodified) call to the same OpenVolume/EnableBackupPrivilege.
+return Adapt(BulkScanner.Scan(settings));
+```
+
+The probe's own handle is opened and immediately closed (`using`); the real scan then opens its own handle
+again inside `BulkScanner.Scan`/`Scanner.Run`, unchanged. This costs one extra, cheap `CreateFile`+`CloseHandle`
+round trip, only on the `dirsizer.exe` path, never on the dedicated executables' path (they never call the
+probe). In exchange: zero risk to existing dedicated-executable behavior, and the availability check is
+unambiguous by construction — it is *only* ever the wrapper's own probe call, nothing inside the black-box
+`BulkScanner.Scan`/`Scanner.Run` calls is inspected or intercepted.
+
+**Everything from `BulkScanner.Scan`/`Scanner.Run` onward is a real result or a real error, full stop**, exactly
+as it is for the dedicated executables today. In particular: `BulkScanOutcome`'s `Change`/`Attempts` (the
+existing MFT-layout-changed / `UNSTABLE` signal) is an ordinary returned value, not an exception — nothing here
+touches that. A later FSCTL call failing partway through a real scan, a corrupt record, a later access-denied on
+a specific file — all of these propagate as errors exactly as they do in the dedicated executables today,
+because that code path is, byte for byte, the same code path. The selector's `catch` clause is narrow
+(`catch (StrategyUnavailableException)` around the call into each strategy's `Scan` method), and
+`StrategyUnavailableException` can only ever originate from the two probe call sites above.
 
 ## Strategies
 
@@ -171,21 +214,70 @@ drive letter, this is what runs, exactly as it does today when invoked directly.
 
 ## `IScanStrategy`
 
+An earlier draft of this section said the three strategies' existing result/settings types were reused as-is
+*through* `IScanStrategy`, while also saying `dirsizer.exe`'s output should not vary by strategy. Those two
+statements can't both be true — `FsResult`, `ScanResult`, and `BulkScanOutcome` are genuinely different shapes,
+so something has to adapt between them and one uniform output. Resolved here: **each strategy's native
+scan method stays completely unchanged** (still what the dedicated executables call directly, with their own,
+unchanged, full-detail output); **each `IScanStrategy` implementation is a thin adapter** that calls its native
+method and maps the result into one small, genuinely common type that `dirsizer.exe` — and only
+`dirsizer.exe` — serializes uniformly.
+
 ```csharp
 interface IScanStrategy
 {
-    string Name { get; }             // "mft", "fsctl", "filesystem" — reported, see "Reporting"
-    ScanOutcome Scan(string rootPath, ScanOptions options);
+    string Name { get; }                          // "mft", "fsctl", "filesystem" — reported, see "Reporting"
+    UnifiedScanResult Scan(string rootPath, UnifiedScanOptions options);   // throws StrategyUnavailableException
 }
+
+// dirsizer.exe's own, uniform result: every strategy adapts its native result into this. Dedicated executables
+// are completely unaffected -- they still call their native Scan/Run method directly and print their own,
+// richer, strategy-specific output exactly as they do today. This type lives in DirSizer.Core.
+sealed record UnifiedScanResult(
+    string Volume, int Top,
+    UnifiedItem Root, UnifiedItem[] RootChildren, UnifiedItem[] Directories, UnifiedItem[] Files,
+    long DirectoriesScanned, long Unreadable, long FileCount, long Bytes, string[] ErrorSamples,
+    string Strategy, string? StrategyFallback, string? StrategyFallbackReason, double TotalMs);
+
+readonly record struct UnifiedItem(string Path, long Size);
+
+// What dirsizer.exe itself accepts, before being translated into each strategy's own native settings type by
+// that strategy's adapter (see "Common CLI options" below).
+sealed record UnifiedScanOptions(int Top, bool Files, bool Dirs, bool Strict, int Workers);
 ```
 
-`ScanOutcome`/`ScanOptions` are not new generic types invented for this interface — each strategy's existing
-result/settings types (`BulkScanOutcome`/`BulkScanSettings`, `ScanResult`/`Options`, `FsResult`/`ScanSettings`)
-are reused as-is inside each strategy's implementation. The interface's job is only to let
-`ScanStrategySelector` try strategies in order and catch `StrategyUnavailableException` uniformly; it does not
-attempt to unify the three existing result shapes into one type in this work (their output formatting stays
-strategy-specific, same as today's three separate `--json` shapes) — a shared result model is future work if and
-when file/directory search (which does need one) is built.
+Each adapter's mapping is small because the three native shapes are already close: `FsResult`'s
+`ResultItem[]`/`Counters` and MFT/FSCTL's `ResultCandidates`/`ScanResult` (built from the same
+`DirSizer.Core.ResultSelector`/`SizeAggregator` pipeline both already share) both reduce to path/size pairs plus
+a handful of counters. `FileSystemScanner`'s adapter maps `Counters.DirectoriesScanned` directly,
+`DirectoriesDenied + DirectoriesFailed` into `Unreadable`; `MftScanner`/`NtfsFsctlScanner`'s adapters map their
+existing `Scanned`/`Skipped` fields the same way (`Skipped` → `Unreadable` — the closest existing analogue to
+"could not be fully accounted for", used consistently even though the underlying reason differs from a denied
+directory). `TotalMs` and the strategy-specific extras that do *not* fit this common shape (`enum_ms_total`,
+`entries_per_sec`, the enumerator name and its own fallback fields, MFT's `UNSTABLE`/`Attempts`, and so on) are
+**not** part of `UnifiedScanResult` — a user who needs that level of detail uses the matching dedicated
+executable's own `--benchmark`/`--json`, which is unchanged and already has it. `dirsizer.exe`'s own output is
+deliberately smaller than any one dedicated executable's, not a superset — this is what "the user never needs
+to understand internals" means concretely: less to look at, not a bigger merged schema.
+
+A shared result model covering every strategy's full detail (not just this common subset) is explicitly not
+attempted here — future work if and when file/directory search needs one, as the previous draft already said.
+
+## Common CLI options
+
+**`dirsizer.exe` accepts exactly**: `--top=N`, `--files`, `--dirs`, `--json`, `--strict`, `--benchmark`,
+`--workers N`, `--self-test`, `-h`. Every option except `--workers` has **identical meaning regardless of which
+strategy ran** — because, per `IScanStrategy` above, `--top`/`--files`/`--dirs`/`--json`/`--strict`/`--benchmark`
+all act on the one common `UnifiedScanResult`, not on a strategy's native result, so there is nothing for them
+to disagree about between strategies.
+
+**`--workers N` is accepted for every strategy, but is only meaningful for `FileSystemScanner`** (passed through
+to it exactly as today). Neither `BulkScanner.Scan` nor `Scanner.Run` has a worker-count concept at all — both
+read the MFT/volume with a single sequential I/O stream, not a parallel directory walk — so `MftScanner`'s and
+`NtfsFsctlScanner`'s adapters simply ignore `UnifiedScanOptions.Workers`. This is stated plainly rather than
+either rejecting the flag for those strategies (the user does not know in advance which strategy will run, so a
+flag that sometimes errors depending on invisible internal state would violate "the user never needs to
+understand internals") or pretending it does something it doesn't.
 
 ## Executable structure
 
@@ -218,21 +310,28 @@ underlying code.
 
 ## Reporting
 
-Diagnostic output (not the normal user path) may show which strategy ran. `--benchmark`/`--json` on
-`dirsizer.exe` report `strategy=mft|fsctl|filesystem` (and, only for `filesystem`, the existing
-`enumerator=...`/`enumerator_fallback=...` fields underneath it, unchanged in shape). If a fallback between
-strategies happened (an `StrategyUnavailableException` was caught), the result records which strategy was
-actually used and why — same spirit as `enumerator_fallback`/`enumerator_fallback_reason`, one level up. A real
-scan error is reported as an error, never silently turned into "tried a different strategy".
+`dirsizer.exe`'s `--json` output is the `UnifiedScanResult` shape from "`IScanStrategy`" above, serialized the
+same uniform way regardless of which strategy ran — `strategy` (`"mft"`/`"fsctl"`/`"filesystem"`) is just one
+more field in it, not a switch that changes the rest of the schema. If a fallback between strategies happened (a
+`StrategyUnavailableException` was caught), `strategy_fallback`/`strategy_fallback_reason` are set — same spirit
+as `enumerator_fallback`/`enumerator_fallback_reason` one level down, at the `FileSystemScanner` strategy's own
+internal level, which `dirsizer.exe`'s output does not surface (see `IScanStrategy`: that level of detail stays
+on the dedicated executables). `--benchmark` prints one text line built from the same `UnifiedScanResult`,
+`strategy=...` included. A real scan error is reported as an error, never silently turned into "tried a
+different strategy" — nothing in this section changes the availability/failure boundary already specified
+above.
 
 ## Testing
 
 Every strategy keeps satisfying its own existing independent-oracle tests, unchanged (`DirSizer.Fs.Core`'s 39,
 `DirSizer.Bulk`'s, `DirSizer.Fsctl`'s). New tests, one set per step:
 
-- **Step 1**: `dirsizer.exe`'s result is identical to `dirsizer-fs.exe`'s for the same input (the "no behavior
-  change" acceptance criterion — snapshot equality, the same technique used for the very first enumerator-
-  contract step); the selector reports `strategy=filesystem`.
+- **Step 1**: `dirsizer.exe`'s `UnifiedScanResult` (root/root_children/directories/files paths and sizes,
+  `directories_scanned`, `unreadable`, `file_count`, `bytes`) matches what `dirsizer-fs.exe`'s own `FsResult`
+  gives for the same input, once passed through the `FileSystemScanner` adapter's mapping — this is the "no
+  behavior change" acceptance criterion for this step, checked at the level of scan substance, **not** raw JSON
+  equality (the two JSON shapes are deliberately different from Step 1 onward, per "`IScanStrategy`"). The
+  selector reports `strategy=filesystem`.
 - **Step 2**: automated, always runs, no elevation needed — a fake/injectable
   `StrategyUnavailableException`-throwing `IScanStrategy` proves the selector moves to the next strategy on
   exactly that exception and nothing else (mirrors `FallbackEnumerator`'s test shape). **Separately, manual**:
@@ -240,9 +339,11 @@ Every strategy keeps satisfying its own existing independent-oracle tests, uncha
   the administrator token `OpenVolume`/`SeBackupPrivilege` actually require — so, unlike the existing deny-ACL
   test, real MFT selection is *not* reachable by an ordinary `--self-test` run and must not be asserted as one.
   Verified by hand instead, the same way the `--enumerator=auto` real-hardware smoke check was done: run
-  `dirsizer.exe C:\` from a genuinely elevated console and confirm `strategy=mft` plus a result identical to
-  `dirsizer-mft.exe C:\`'s (snapshot comparison); also run it from a normal, non-elevated console and confirm
-  `strategy=filesystem` with no error.
+  `dirsizer.exe C:\` from a genuinely elevated console and confirm `strategy=mft` plus a `UnifiedScanResult`
+  that matches `dirsizer-mft.exe C:\`'s own result at the substance level (root/directory sizes, counts — via
+  the `MftScanner` adapter's mapping, same "substance, not raw JSON" comparison as Step 1, not a snapshot
+  equality check); also run it from a normal, non-elevated console and confirm `strategy=filesystem` with no
+  error.
 - **Step 3**: same split — automated fake-based selector test (a fake MFT strategy throws
   `StrategyUnavailableException`, a fake FSCTL strategy succeeds, proving the two-level chain end to end,
   including that FSCTL is genuinely reachable when MFT is not — this is the only place that combination is
@@ -261,7 +362,10 @@ strategies above it.
 ## Not part of this work
 
 Automatic elevation (a normal `dirsizer.exe` invocation never tries to elevate itself); filtering MFT/FSCTL scans
-to an arbitrary subdirectory (drive-root-only, as today); a unified `ScanOutcome` type shared by all three
-strategies (deferred to when search needs it); cold-cache or cross-machine measurement; `dirsizer-inspect.exe`
-changes; changing which enumerator `FileSystemScanner` defaults to (still `find`, per the frozen rollout-gate
-result); renaming any project folder (only `AssemblyName`s change).
+to an arbitrary subdirectory (drive-root-only, as today); a **full-detail** shared result type covering every
+strategy-specific field each native result has (`UnifiedScanResult` is deliberately a small common subset, not
+this — see "`IScanStrategy`"; a full-detail shared model is deferred to when search needs one); cold-cache or
+cross-machine measurement; `dirsizer-inspect.exe` changes; changing which enumerator `FileSystemScanner`
+defaults to (still `find`, per the frozen rollout-gate result); renaming any project folder (only
+`AssemblyName`s change); benchmarking MFT vs FSCTL vs `FileSystemScanner` against each other (the selection
+order is a documented prior, not a measurement — see "Selection policy is a prior, not a measurement").
