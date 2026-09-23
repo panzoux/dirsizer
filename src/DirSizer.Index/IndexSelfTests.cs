@@ -18,6 +18,8 @@ static partial class IndexSelfTests
             new("index file: saving replaces the file and leaves no temporary file", SaveReplacesTheFileAtomically),
             new("index file: TryLoad says why nothing was loaded", TryLoadExplainsWhy),
             new("verifier: finds size, name, missing, extra, total and reference differences", VerifierFindsEachKindOfDifference),
+            new("query: the whole volume equals the scan's own selection", WholeVolumeQueryMatchesTheScanSelection),
+            new("query: a subtree covers only that directory", SubtreeQueryCoversOnlyTheDirectory),
         };
 
         var failed = 0;
