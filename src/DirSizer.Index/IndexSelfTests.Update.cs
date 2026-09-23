@@ -130,4 +130,112 @@ static partial class IndexSelfTests
         source.Clusters.Clear();
         Assert(AttributeList.ExtensionRecords(record, 50, source) is null, "unreadable clusters give null");
     }
+
+    // Root 5; A (30) with B (31) holding b.bin (40, 100) and a.bin (41, 20); r.bin (43, 3) at the root.
+    static FakeRecordSource SampleVolume()
+    {
+        var source = new FakeRecordSource();
+        source.Records[5] = DirBytes(5, 5, ".");
+        source.Records[30] = DirBytes(30, 5, "A");
+        source.Records[31] = DirBytes(31, 30, "B");
+        source.Records[40] = FileBytes(40, 31, "b.bin", 100);
+        source.Records[41] = FileBytes(41, 30, "a.bin", 20);
+        source.Records[43] = FileBytes(43, 5, "r.bin", 3);
+        return source;
+    }
+
+    // Applies the changes, then checks the index against what a full scan of the changed volume produces.
+    static UpdateResult ApplyAndCompare(FakeRecordSource source, Dictionary<ulong, FileRecord> records, params ulong[] changed)
+    {
+        var changes = new List<UsnChange>();
+        foreach (var number in changed) changes.Add(new UsnChange(number, 0, 0));
+        var result = IndexUpdater.Apply(records, changes, new SortedSet<ulong>(), source);
+        AssertEqual((string?)null, result.RebuildReason, "no rebuild needed");
+        var verify = IndexVerifier.Compare(Aggregated(records).Records, Aggregated(source.Scan()).Records);
+        AssertEqual(0, verify.Differences, $"differences from a fresh scan ({string.Join("; ", verify.Samples)})");
+        return result;
+    }
+
+    static void UpdateAppliesCreateModifyDeleteRenameAndMove()
+    {
+        var source = SampleVolume();
+        var records = source.Scan();
+        source.Records[41] = FileBytes(41, 30, "a.bin", 90);    // modified: 20 -> 90 bytes
+        source.Records.Remove(43);                               // deleted
+        source.Records[44] = FileBytes(44, 31, "new.bin", 5);    // created in B
+        source.Records[32] = DirBytes(32, 5, "C");               // new directory C
+        source.Records[31] = DirBytes(31, 32, "B-renamed");      // B renamed and moved from A into C, with its content
+        var result = ApplyAndCompare(source, records, 41, 43, 44, 32, 31, 41);
+        AssertEqual(6, result.Changes, "journal entries");
+        AssertEqual(5, result.Reread, "distinct records read again (41 is in the journal twice)");
+        AssertEqual(1, result.Removed, "r.bin removed");
+        AssertEqual(4, result.Replaced, "41, 44, 32, 31 rewritten");
+        var index = Aggregated(records);
+        AssertEqual(195L, index.Records[5].Size, "root: a.bin 90 + b.bin 100 + new.bin 5");
+        AssertEqual(105L, index.Records[32].Size, "C: the moved B with b.bin and new.bin");
+        AssertEqual(90L, index.Records[30].Size, "A: only a.bin is left");
+    }
+
+    static void UpdateSeesAReusedRecordAsANewFile()
+    {
+        var source = SampleVolume();
+        var records = source.Scan();
+        source.Records[43] = FileBytes(43, 30, "other.bin", 9, sequence: 2);   // r.bin deleted, its record reused
+        ApplyAndCompare(source, records, 43);
+        AssertEqual((ushort)2, records[43].Reference.SequenceNumber, "the new sequence number");
+    }
+
+    static void UpdateReadsExtensionRecordsThroughTheAttributeList()
+    {
+        var source = SampleVolume();
+        var baseRecord = FileBytes(50, 30, "big.bin", 0);
+        AddAttributeList(baseRecord, 50, 51);
+        source.Records[50] = baseRecord;
+        source.Records[51] = ExtensionBytes(51, 50, 30, "BIG~1.BIN", 10);
+        var records = source.Scan();
+        source.Records[51] = ExtensionBytes(51, 50, 30, "BIG~1.BIN", 70);   // the data lives in the extension record
+        var result = ApplyAndCompare(source, records, 50);                 // the journal names only the base record
+        AssertEqual(1, result.ExtensionReads, "extension record 51 read through the attribute list");
+        AssertEqual(70L, records[50].LogicalSize, "the size from the extension record");
+    }
+
+    static void UpdateDropsARecordThatBecameAnExtension()
+    {
+        var source = SampleVolume();
+        var records = source.Scan();
+        source.Records[43] = ExtensionBytes(43, 41, 30, "A~1.BIN", 0);   // record 43 is now an extension record of a.bin
+        var baseRecord = FileBytes(41, 30, "a.bin", 20);
+        AddAttributeList(baseRecord, 41, 43);
+        source.Records[41] = baseRecord;
+        ApplyAndCompare(source, records, 43, 41);
+        Assert(!records.ContainsKey(43), "43 is no longer an entry of its own");
+    }
+
+    static void UnreadableExtensionAsksForARebuild()
+    {
+        var source = SampleVolume();
+        var records = source.Scan();
+        var baseRecord = FileBytes(50, 30, "big.bin", 0);
+        AddAttributeList(baseRecord, 50, 51);
+        source.Records[50] = baseRecord;   // record 51 does not exist
+        var result = IndexUpdater.Apply(records, [new UsnChange(50, 0, 0)], new SortedSet<ulong>(), source);
+        AssertContains(result.RebuildReason, "51", "the rebuild reason names the missing extension record");
+    }
+
+    static void MetadataRecordsAreAlwaysReread()
+    {
+        var source = SampleVolume();
+        source.Records[0] = FileBytes(0, 5, "$MFT", 100);
+        source.Records[11] = DirBytes(11, 5, "$Extend");
+        source.Records[24] = DirBytes(24, 11, "$RmMetadata");
+        source.Records[25] = FileBytes(25, 24, "$Repair", 1);
+        var records = source.Scan();
+        var metadata = IndexUpdater.MetadataRecords(records);
+        Assert(metadata.Contains(0) && metadata.Contains(11) && metadata.Contains(23), "records 0-23 are metadata");
+        Assert(metadata.Contains(24) && metadata.Contains(25), "the $Extend tree is metadata");
+        Assert(!metadata.Contains(30) && !metadata.Contains(43), "user directories and files are not");
+        source.Records[0] = FileBytes(0, 5, "$MFT", 200);   // $MFT grew; NTFS writes no USN record for that
+        IndexUpdater.Apply(records, [], metadata, source);
+        AssertEqual(200L, records[0].LogicalSize, "the $MFT size is current without a journal entry");
+    }
 }

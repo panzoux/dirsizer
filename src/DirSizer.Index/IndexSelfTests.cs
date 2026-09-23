@@ -28,6 +28,12 @@ static partial class IndexSelfTests
             new("attribute list: a resident list names the extension records", ResidentAttributeListNamesExtensionRecords),
             new("attribute list: a damaged entry is not guessed", DamagedAttributeListIsNotGuessed),
             new("attribute list: a non-resident list is read through its run list", NonResidentAttributeListIsReadFromItsClusters),
+            new("update: create, modify, delete, rename and move equal a fresh scan", UpdateAppliesCreateModifyDeleteRenameAndMove),
+            new("update: a reused record is a new file", UpdateSeesAReusedRecordAsANewFile),
+            new("update: extension records are read through the base record's attribute list", UpdateReadsExtensionRecordsThroughTheAttributeList),
+            new("update: a record that became an extension record is dropped", UpdateDropsARecordThatBecameAnExtension),
+            new("update: an unreadable extension record asks for a full scan", UnreadableExtensionAsksForARebuild),
+            new("update: NTFS metadata records are read again without journal entries", MetadataRecordsAreAlwaysReread),
         };
 
         var failed = 0;
