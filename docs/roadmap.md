@@ -69,7 +69,8 @@ The reported metric is logical bytes in the unnamed `$DATA` attribute. The scann
   - Cold `C:` (this machine, JIT Release builds, first scan after a reboot, one reboot and one run per tool): FSCTL total 38,150 ms (query 35,639 ms), bulk 6,086 ms (raw read 3,383 ms, 360 MB/s over 156 reads), speedup 6.27x. Warm `C:` for comparison (JIT, medians above): FSCTL 7,997 ms, bulk 5,617 ms, 1.42x. A cold cache costs FSCTL about 30 s more and bulk about 0.5 s more. One run per tool, so no spread.
   - U: (2 GiB, 64 KiB clusters, 256 slots) warm: FSCTL 19.0 ms, bulk 35.9 ms, speedup 0.49x; raw read 169 MB/s. With `-ColdDismount`: FSCTL 52.3 ms, bulk 61.3 ms, speedup 0.89x; raw read 173 MB/s.
   - V: (2 GiB, 4 KiB clusters, fragmented MFT, 100,608 slots) warm: FSCTL 871 ms, bulk 564 ms, speedup 1.51x; raw read 456 MB/s. With `-ColdDismount`: FSCTL 4,267 ms, bulk 539 ms, speedup 7.92x; raw read 461 MB/s.
-  - Conclusion: dismounting empties the NTFS cache (FSCTL gets 2.7x to 4.9x slower), but bulk raw-read MB/s is unchanged (within 3 %), so the host still caches the VHDX file. These are "dismount runs, host cache not excluded", not cold-cache numbers. Second machine: not run yet.
+  - Conclusion: dismounting empties the NTFS cache (FSCTL gets 2.7x to 4.9x slower), but bulk raw-read MB/s is unchanged (within 3 %), so the host still caches the VHDX file. These are "dismount runs, host cache not excluded", not cold-cache numbers.
+  - Second machine (hardware not described; shipped 0.6.0 NativeAOT `dirsizer-fsctl.exe` / `dirsizer-mft.exe`; two data volumes, T: and U:, about 104,000 MFT slots of 1 KiB each; 3 FSCTL runs, then 3 bulk runs, not alternated): FSCTL cold first run U: 15,561 ms / T: 16,729 ms, warm (mean of runs 2-3) U: 1,293 ms / T: 1,463 ms; bulk median U: 1,316 ms / T: 1,312 ms (all runs 1.2-1.5 s, raw read 97-121 MB/s over 13 reads). Warm speedup 0.98x / 1.12x, so without a cold cache bulk is no faster there; FSCTL cold first run against the bulk median 11.8x / 12.8x. Whether the first bulk run was cold is not established: the FSCTL runs before it warm the $MFT file cache, not the volume reads bulk makes, and its raw read (97 / 106 MB/s) was only a little slower than the later runs. Not measured there: `C:`, alternated pairs.
 - [ ] Define consistency and failure behavior before making the bulk reader the default.
 
 ## P4 - Product layout: three tools
@@ -108,7 +109,7 @@ Current product state: `dirsizer-fsctl` is the conservative reference, `dirsizer
 - [x] Correctness on another NTFS volume (different size, cluster size, or MFT record size) with the same reader-vs-reader comparison. U: (VHDX, 2 GiB, 64 KiB clusters, 4 KiB MFT records, `New-TestVolume.ps1`, `New-AbFixture.ps1`; `compact /c` does not compress with 64 KiB clusters, so U: has no compressed file): `Compare-Readers.ps1` EQUAL; `DirSizer.Compare` 0 mismatches over 256 slots (84 in-use records, 15 extension records).
 - [x] Correctness with a strongly fragmented MFT (several extents, so the multi-extent and multi-call `ERROR_MORE_DATA` paths run on real data, not only on a small extent map). V: (VHDX, 2 GiB, 4 KiB clusters, 1 KiB records, `New-FragmentedMft.ps1`, `New-AbFixture.ps1`): 28 MFT extents, 100,608 slots; `Compare-Readers.ps1` EQUAL in 3 runs; `DirSizer.Compare` 0 mismatches over 100,520 in-use records; the extent map read with 32/48/64/100-byte buffers took 28/14/10/6 calls with 27/13/9/5 `ERROR_MORE_DATA` responses and was equal to the normal read.
 - [ ] Failure paths that could not be executed here: a failing raw read, a corrupt extent map on a real volume.
-- [ ] Performance re-measured on more than one machine, and with a cold file cache. Cold cache: done on `C:` of this machine, bulk 6.27x faster than FSCTL (see P3). Second machine: not run yet.
+- [x] Performance re-measured on more than one machine, and with a cold file cache. Cold cache: `C:` of this machine, bulk 6.27x faster than FSCTL. Second machine: two data volumes, bulk about as fast as a warm FSCTL (0.98x-1.12x) and about 12x faster than a cold one (see P3). The advantage of bulk is mainly a cold cache.
 
 Cold-cache and multi-machine numbers are needed to promote it, not to offer it as an option.
 
@@ -134,7 +135,7 @@ now
 Do not change the design here; finish what is open. MFT direct scan, whole-volume file/folder aggregation, and the FSCTL cross-check are done (P0-P4); `dirsizer.exe` already picks MFT, FSCTL, or a directory walk automatically. Remaining:
 
 - [x] Correctness and stability on a fragmented MFT (28 extents) and on another volume (see "Promotion criteria" above). A VHDX cannot hold a larger MFT than `C:` has.
-- [ ] Performance with a cold file cache and on a second machine (P3, P5). Cold cache on `C:`: done (FSCTL 38.1 s, bulk 6.1 s). Second machine: not run yet.
+- [x] Performance with a cold file cache and on a second machine (P3). Cold cache on `C:`: FSCTL 38.1 s, bulk 6.1 s. Second machine, two data volumes: warm FSCTL 1.3-1.5 s, cold FSCTL 15.6-16.7 s, bulk 1.3 s.
 
 Deliverable: a fast, correct one-shot NTFS size analyzer.
 

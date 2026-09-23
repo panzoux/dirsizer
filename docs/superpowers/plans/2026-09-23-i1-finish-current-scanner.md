@@ -454,7 +454,7 @@ there run `dirsizer-fsctl C: --benchmark` and `dirsizer-mft C: --benchmark` thre
 the `benchmark:` lines.
 ````
 
-- [ ] **Step 2: If the user sends numbers, record them**
+- [x] **Step 2: If the user sends numbers, record them**
 
 Put them under the P3 cold-cache item and "Promotion criteria" (performance item), with the machine described as
 the user describes it. If the user sends nothing, leave both items unticked and write "not run: needs a reboot / a
