@@ -25,6 +25,9 @@ static partial class IndexSelfTests
             new("usn: short, undersized and non-V2 records are errors", DamagedUsnRecordsAreErrors),
             new("usn: reading follows the journal to its end", ReadChangesFollowsTheJournalToItsEnd),
             new("usn: a wrapped journal gives null; other errors and no progress throw", ReadChangesReportsWrapsAndErrors),
+            new("attribute list: a resident list names the extension records", ResidentAttributeListNamesExtensionRecords),
+            new("attribute list: a damaged entry is not guessed", DamagedAttributeListIsNotGuessed),
+            new("attribute list: a non-resident list is read through its run list", NonResidentAttributeListIsReadFromItsClusters),
         };
 
         var failed = 0;
