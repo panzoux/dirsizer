@@ -28,4 +28,31 @@ static partial class IndexSelfTests
         AssertEqual(3L, result.FileCount, "files: b.bin, a.bin, x.bin");
         AssertEqual(1, SubtreeQuery.Descendants(index.Records, 32).Count, "below C: only its own file; x.bin's selected parent is A");
     }
+
+    static IndexRun SampleRun(VerifyResult? verify = null)
+    {
+        var result = new UnifiedScanResult("T:\\", 25, new UnifiedItem("T:\\", 180), [new UnifiedItem("T:\\A", 170)],
+            [new UnifiedItem("T:\\", 180), new UnifiedItem("T:\\A", 170)], [new UnifiedItem("T:\\A\\B\\b.bin", 100)],
+            4, 0, 5, [], "index", null, null, 12.5);
+        return new IndexRun(result, "full", "no saved index", "X:\\idx\\0000000000000001.dsix", 4096, true, true, 10, 7, 1000, null, verify, new IndexTimings());
+    }
+
+    static void OutputHasTheSummaryAndTheIndexObject()
+    {
+        var text = new StringWriter();
+        var error = new StringWriter();
+        IndexOutput.Write(SampleRun(), IndexOptions.Parse(["T:"]), text, error);
+        AssertContains(text.ToString(), "strategy=index mode=full path=T:\\ directories=4 files=5 usn_changes=0 records_reread=0 saved=yes", "text summary line");
+        AssertContains(error.ToString(), "index: full scan (no saved index)", "the reason for the full scan is on stderr");
+
+        var json = new StringWriter();
+        IndexOutput.Write(SampleRun(new VerifyResult(0, [])), IndexOptions.Parse(["T:", "--json", "--verify"]), json, new StringWriter());
+        using var document = System.Text.Json.JsonDocument.Parse(json.ToString());
+        var index = document.RootElement.GetProperty("index");
+        AssertEqual("full", index.GetProperty("mode").GetString(), "json index.mode");
+        AssertEqual("no saved index", index.GetProperty("rebuild_reason").GetString(), "json index.rebuild_reason");
+        AssertEqual(7UL, index.GetProperty("journal_id").GetUInt64(), "json index.journal_id");
+        AssertEqual(0, document.RootElement.GetProperty("verify").GetProperty("differences").GetInt32(), "json verify.differences");
+        AssertEqual(180L, document.RootElement.GetProperty("root").GetProperty("size").GetInt64(), "json root.size");
+    }
 }

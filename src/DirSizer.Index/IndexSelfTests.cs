@@ -20,6 +20,7 @@ static partial class IndexSelfTests
             new("verifier: finds size, name, missing, extra, total and reference differences", VerifierFindsEachKindOfDifference),
             new("query: the whole volume equals the scan's own selection", WholeVolumeQueryMatchesTheScanSelection),
             new("query: a subtree covers only that directory", SubtreeQueryCoversOnlyTheDirectory),
+            new("output: text summary line, stderr reason, JSON index and verify objects", OutputHasTheSummaryAndTheIndexObject),
         };
 
         var failed = 0;
