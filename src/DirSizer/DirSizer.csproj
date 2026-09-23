@@ -27,5 +27,6 @@
     <Compile Include="..\Shared\BulkReader\BulkReport.cs" />
     <Compile Include="..\DirSizer.Bulk\BulkIntegration.cs" />
     <Compile Include="..\Shared\ScanResultAdapter.cs" />
+    <Compile Include="..\Shared\FsctlScanner.cs" />
   </ItemGroup>
 </Project>

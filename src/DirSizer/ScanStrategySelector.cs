@@ -33,6 +33,6 @@ static class ScanStrategySelector
         string drive;
         try { drive = DriveRoot.Validate(rootPath); }
         catch (ArgumentException) { return [new FileSystemStrategy()]; }
-        return VolumeInfo.IsNtfs(drive) ? [new MftStrategy(), new FileSystemStrategy()] : [new FileSystemStrategy()];
+        return VolumeInfo.IsNtfs(drive) ? [new MftStrategy(), new FsctlStrategy(), new FileSystemStrategy()] : [new FileSystemStrategy()];
     }
 }

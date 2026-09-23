@@ -20,6 +20,7 @@
     <Compile Include="..\Shared\Cli.cs" />
     <Compile Include="..\Shared\DriveRoot.cs" />
     <Compile Include="..\Shared\SelfTests.cs" />
+    <Compile Include="..\Shared\FsctlScanner.cs" />
     <ProjectReference Include="..\DirSizer.Core\DirSizer.Core.csproj" />
   </ItemGroup>
 </Project>
