@@ -429,7 +429,7 @@ git commit -m "roadmap: warm and dismount-cold benchmarks on U: and V:"
 The agent cannot reboot the machine or reach another one. It must not claim these results. Hand the user the
 exact commands, and record their output only if the user sends it back.
 
-- [ ] **Step 1: Give the user this procedure, word for word**
+- [x] **Step 1: Give the user this procedure, word for word**
 
 ````markdown
 Cold cache on C:. Only the first scan after a reboot is cold, so each tool needs its own reboot. After each
