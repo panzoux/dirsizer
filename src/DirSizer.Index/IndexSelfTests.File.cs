@@ -143,4 +143,25 @@ static partial class IndexSelfTests
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
         }
     }
+
+    static void VerifierFindsEachKindOfDifference()
+    {
+        var fresh = Aggregated(SampleRecords()).Records;
+        AssertEqual(0, IndexVerifier.Compare(Aggregated(SampleRecords()).Records, fresh).Differences, "identical indexes");
+
+        void ExpectOne(Action<Dictionary<ulong, FileRecord>> change, string fragment, string what)
+        {
+            var index = Aggregated(SampleRecords()).Records;
+            change(index);
+            var result = IndexVerifier.Compare(index, fresh);
+            AssertEqual(1, result.Differences, what);
+            AssertContains(result.Samples[0], fragment, what);
+        }
+        ExpectOne(index => index[41].LogicalSize = 21, "logical size", "a changed file size");
+        ExpectOne(index => index[43].Names[0] = Name("s.bin"), "name 0", "a changed name");
+        ExpectOne(index => index.Remove(43), "missing from the index", "a missing record");
+        ExpectOne(index => index.Add(99, new FileRecord(Ref(99), 1, false)), "no longer on the volume", "an extra record");
+        ExpectOne(index => index[30].Size += 1, "directory size", "a wrong directory total");
+        ExpectOne(index => index[40].Reference = Ref(40, 2), "reference", "a reused record");
+    }
 }
