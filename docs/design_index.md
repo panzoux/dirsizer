@@ -104,6 +104,16 @@ delta right after deleting a tree that is in the base file (before new files can
 to fail when the metadata re-read, the extension-record reads, the delta's removals, or the recording of replaced
 entries were disabled. Timings: `scripts\Measure-Index.ps1`.
 
+## Subtree queries (I4)
+
+The target can be any directory on the indexed volume. Windows resolves the path itself (`GetFileInformationByHandle`
+gives the volume serial and the file reference), so junctions and mount points are followed as Windows follows them.
+The result must be on the indexed volume, and its reference, sequence number included, must be in the index. The
+answer is a walk down the selected parents from that record (`SubtreeQuery`). The whole volume uses the scan's own
+`ResultSelector.Collect`, so it equals `dirsizer-mft`. One index per volume serves every query on that volume.
+Checked against `dirsizer-fs` (an independent directory walk) on a folder without hard links in
+`Test-IndexIncremental.ps1`.
+
 ## Privacy
 
 The index lists every file and directory name on the volume, including names in directories that the user could

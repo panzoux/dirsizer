@@ -8,7 +8,8 @@
   few changes save only a delta file; the checks say which kind of save each run made. One step creates empty files
   until $MFT grows (NTFS writes no journal entry for that, so it checks the metadata re-reads; it is also more changes
   than a delta may hold, so those runs save the whole index). The MFT never shrinks, so every run leaves it somewhat
-  larger.
+  larger. Subtree queries (a directory below the root) are compared with the sum of its files, with dirsizer-fs (an
+  independent directory walk) and with the whole-volume listing.
   Writes only inside <Volume>\index-test. It deletes and recreates the volume's USN journal to test the fallbacks; at
   the end the journal is active (with a new id). Index files go to a temporary directory. Refuses volumes that are not
   NTFS or not labelled NTFSTEST (-AllowAnyLabel overrides). Needs an elevated shell and a Release build. Nothing else
@@ -20,6 +21,7 @@ param(
     [string]$Volume = 'T:',
     [string]$Tool = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Index\release_win-x64\dirsizer-index.dll'),
     [string]$InspectTool = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Inspect\release_win-x64\dirsizer-inspect.dll'),
+    [string]$FsTool = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Fs\release_win-x64\dirsizer-fs.dll'),
     [switch]$AllowAnyLabel
 )
 $ErrorActionPreference = 'Stop'
@@ -166,6 +168,25 @@ try {
     Check-Mode $r 'incremental' 'after a full save of an incremental run'
     Check-Verified $r 'after a full save of an incremental run'
     Check-Saved $r 'delta' 'after a full save of an incremental run'
+
+    '--- subtree queries'
+    $expected = (Get-ChildItem -Recurse -File "$root\plain" | Measure-Object Length -Sum).Sum   # no hard links under plain
+    $r = Invoke-Index "$root\plain"
+    Check-Mode $r 'incremental' 'subtree'
+    Check 'subtree: root path' ($r.Json.root.path -eq "$root\plain") $r.Json.root.path
+    Check "subtree: size = sum of its files ($expected)" ($r.Json.root.size -eq $expected) "index=$($r.Json.root.size)"
+    $fsJson = if ($FsTool -like '*.exe') { & $FsTool "$root\plain" --json 2> $null } else { & dotnet $FsTool "$root\plain" --json 2> $null }
+    $fs = $fsJson | ConvertFrom-Json
+    Check 'subtree: equal to dirsizer-fs (root)' ($fs.root.size -eq $r.Json.root.size) "fs=$($fs.root.size) index=$($r.Json.root.size)"
+    # Children are compared by name and size: the two tools need not format the parent part of a path the same way.
+    $fsChildren = ($fs.root_children | ForEach-Object { "$(Split-Path -Leaf $_.path)=$($_.size)" } | Sort-Object) -join ','
+    $indexChildren = ($r.Json.root_children | ForEach-Object { "$(Split-Path -Leaf $_.path)=$($_.size)" } | Sort-Object) -join ','
+    Check 'subtree: equal to dirsizer-fs (children)' ($fsChildren -eq $indexChildren) "fs=$fsChildren index=$indexChildren"
+    $whole = Invoke-Index "$Volume\" @('--top=100000')
+    $fromWhole = @($whole.Json.directories | Where-Object path -eq "$root\plain")
+    Check 'subtree: same size as in the whole-volume listing' ($fromWhole.Count -eq 1 -and $fromWhole[0].size -eq $r.Json.root.size)
+    $r = Invoke-Index "$root\plain\a.bin"
+    Check 'subtree: a file is refused' ($r.Exit -eq 1 -and $r.Stderr -match 'is a file') $r.Stderr
 
     '--- journal recreated: full scan, then incremental again'
     $oldJournal = $r.Json.index.journal_id

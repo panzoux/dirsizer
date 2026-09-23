@@ -3090,7 +3090,7 @@ git commit -m "I3 checkpoint: Measure-Index.ps1, C: timings, incremental update 
 - Create: `src\DirSizer.Index\PathResolver.cs`
 - Modify: `src\DirSizer.Index\IndexRunner.cs`, `src\DirSizer.Index\IndexOptions.cs`, `src\DirSizer.Index\IndexSelfTests.Query.cs`, `src\DirSizer.Index\IndexSelfTests.cs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `IndexSelfTests.Query.cs`, inside the class:
 
@@ -3128,11 +3128,11 @@ Add to the test list:
             new("path: resolved by Windows to the record; missing, file and other-volume cases are refused", PathResolverFindsTheDirectoryRecord),
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Build. Expected: FAIL, `PathResolver` does not exist.
 
-- [ ] **Step 3: Implement `PathResolver.cs`**
+- [x] **Step 3: Implement `PathResolver.cs`**
 
 ```csharp
 using System.Buffers.Binary;
@@ -3188,7 +3188,7 @@ static class PathResolver
 }
 ```
 
-- [ ] **Step 4: Runner: accept any directory on a local drive**
+- [x] **Step 4: Runner: accept any directory on a local drive**
 
 In `IndexRunner.cs`, replace:
 
@@ -3219,7 +3219,7 @@ with:
         var result = SubtreeQuery.Query(index.Records, volume, root, options.Top);
 ```
 
-- [ ] **Step 5: Options: help and error text**
+- [x] **Step 5: Options: help and error text**
 
 In `IndexOptions.cs`:
 - Replace `"A drive root is required, for example C:\\."` with `"A directory is required, for example C:\\ or C:\\Users."`.
@@ -3234,11 +3234,11 @@ In `IndexOptions.cs`:
 
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Expected: `27 self-tests passed, 0 skipped.`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 Normalize-Src
@@ -3253,7 +3253,7 @@ git commit -m "dirsizer-index: query any directory; the path is resolved to its 
 **Files:**
 - Modify: `scripts\Test-IndexIncremental.ps1`, `docs\design_index.md`, `docs\roadmap.md`
 
-- [ ] **Step 1: Add the subtree section to the end-to-end script**
+- [x] **Step 1: Add the subtree section to the end-to-end script**
 
 In `scripts\Test-IndexIncremental.ps1`, insert this block right before the line `    '--- journal recreated: full scan, then incremental again'`:
 
@@ -3278,13 +3278,13 @@ In `scripts\Test-IndexIncremental.ps1`, insert this block right before the line 
     Check 'subtree: a file is refused' ($r.Exit -eq 1 -and $r.Stderr -match 'is a file') $r.Stderr
 ```
 
-- [ ] **Step 2: Run the script (elevated)**
+- [x] **Step 2: Run the script (elevated)**
 
 Run: `.\scripts\Test-IndexIncremental.ps1 -Volume T:; "exit=$LASTEXITCODE"`
 Expected: `ALL CHECKS PASSED`, `exit=0`. `dirsizer-fs` is the independent oracle here: a directory walk that shares no
 code with the index.
 
-- [ ] **Step 3: Docs**
+- [x] **Step 3: Docs**
 
 Append to `docs\design_index.md`, before `## Privacy`:
 
@@ -3307,7 +3307,7 @@ In `docs\roadmap.md`, replace the two I4 items with:
 - [x] Share one index across whole-volume and subtree analyses: one `<serial>.dsix` per volume; every query loads and updates the same file.
 ```
 
-- [ ] **Step 4: Regression guard and commit**
+- [x] **Step 4: Regression guard and commit**
 
 Run the three regression-guard self-tests. Expected: all pass.
 

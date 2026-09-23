@@ -188,8 +188,8 @@ whole-volume MFT index
 
 Today a non-root path always uses the directory walk (unified-strategy spec); with an index, any subtree of an indexed volume can be answered without walking it.
 
-- [ ] Path → FRN resolution on the index; subtree totals equal to a fresh scan of that subtree (and explain differences with `dirsizer-fs.exe`, as in design_fs.md).
-- [ ] Share one index across whole-volume and subtree analyses.
+- [x] Path → FRN resolution on the index; subtree totals equal to a fresh scan of that subtree (and explain differences with `dirsizer-fs.exe`, as in design_fs.md). Windows resolves the path (`PathResolver`; a record reused with another sequence number is refused, mutation-checked); on T:, a subtree's size equals the sum of its files, `dirsizer-fs` (root and every child), and the same directory in the whole-volume listing (`Test-IndexIncremental.ps1`, ALL CHECKS PASSED). The differences with `dirsizer-fs` on trees with hard links are the ones design_fs.md already lists for the NTFS tools.
+- [x] Share one index across whole-volume and subtree analyses: one `<serial>.dsix` per volume; every query loads and updates the same file.
 
 ### I5 - Fast repeated analysis
 
