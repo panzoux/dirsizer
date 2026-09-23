@@ -12,16 +12,20 @@
 param(
     [string]$Volume = 'C:',
     [int]$Runs = 5,
+    # Dismount the volume before every run, so each run starts with an empty NTFS cache for it. Not for the system drive.
+    [switch]$ColdDismount,
     [string]$FsctlDll = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Fsctl\release_win-x64\dirsizer-fsctl.dll'),
-    [string]$BulkDll = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-bulk.dll'),
+    [string]$BulkDll = (Join-Path $PSScriptRoot '..\artifacts\bin\DirSizer.Bulk\release_win-x64\dirsizer-mft.dll'),
     # Extra command-line arguments for each side (none are needed for the two tools).
     [string[]]$FsctlArguments = @(),
     [string[]]$BulkArguments = @()
 )
 # A path ending in .exe (for example a NativeAOT publish) is run directly; a .dll is run through the dotnet host.
 $ErrorActionPreference = 'Stop'
+if ($ColdDismount -and $Volume.TrimEnd('\') -ieq $env:SystemDrive) { throw "-ColdDismount cannot be used on the system drive $env:SystemDrive." }
 
 function Invoke-Benchmark([string]$Dll, [string[]]$Arguments) {
+    if ($ColdDismount) { $null = fsutil volume dismount $Volume; if ($LASTEXITCODE -ne 0) { throw "fsutil volume dismount $Volume failed" } }
     $stderrFile = [IO.Path]::GetTempFileName()
     try {
         if ($Dll -like '*.exe') { & $Dll @Arguments > $null 2> $stderrFile } else { & dotnet $Dll @Arguments > $null 2> $stderrFile }
@@ -71,7 +75,7 @@ function Show([string]$title, $rowsFsctl, $rowsBulk, $definitions) {
 }
 
 ''
-"$Runs alternating runs on $Volume  (each cell: min / median / max, milliseconds unless noted)"
+"$Runs alternating runs on $Volume$(if ($ColdDismount) { ', volume dismounted before every run (cold NTFS cache)' })  (each cell: min / median / max, milliseconds unless noted)"
 $definitions = @(
     @{ Name = 'open';                 Fsctl = { $args[0]['open_ms'] };          Bulk = { $args[0]['open_ms'] } },
     @{ Name = 'volume metadata';      Fsctl = { $args[0]['volume_ms'] };        Bulk = { $args[0]['volume_ms'] } },
