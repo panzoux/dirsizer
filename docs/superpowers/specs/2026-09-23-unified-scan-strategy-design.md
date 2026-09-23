@@ -18,9 +18,10 @@ this document                     dirsizer.exe picks A/B/C's whole scan METHOD  
 ## Goal
 
 `dirsizer.exe` becomes the single normal entry point for folder-size scanning. Given a path, it automatically
-selects the best **validated** and **available** scan strategy for that path's file system — the user never
-names a backend. **"Best" here means a fixed, documented preference order (MFT, then FSCTL, then
-`FileSystemScanner`), not a measured claim** — unlike `FileSystemScanner`'s own internal enumerator choice,
+selects the **best known strategy, according to the documented selection policy** below, among the ones that
+are both **validated** and **available** for that path's file system — the user never names a backend. That
+policy is a fixed, documented preference order (MFT, then FSCTL, then `FileSystemScanner`), not a measured
+claim — unlike `FileSystemScanner`'s own internal enumerator choice,
 which *is* backed by the `feature/fs-enumerator-benchmark`/`feature/fs-enumerator-default` measurements, MFT vs
 FSCTL vs `FileSystemScanner` has never been benchmarked against each other. The order below is a reasonable
 prior (raw `$MFT` reads and FSCTL both avoid the walk's per-directory syscalls, so both are expected to beat
@@ -185,6 +186,16 @@ because that code path is, byte for byte, the same code path. The selector's `ca
 (`catch (StrategyUnavailableException)` around the call into each strategy's `Scan` method), and
 `StrategyUnavailableException` can only ever originate from the two probe call sites above.
 
+**The probe decides availability once, before the real scan starts — it is not re-checked, and a failure
+inside the real scan is never treated as "try the next strategy" even if it happens to be the same kind of
+error the probe would have caught** (for example, rights revoked between the probe and the real open — a
+TOCTOU race, accepted as out of scope: the probe's job is to skip the common case cheaply, not to guarantee
+the real scan can never fail for a related reason). This is a restatement of "everything after the probe is a
+real result or a real error", not a new rule, but stated explicitly here because it is the one place an
+implementer might be tempted to add a second layer of fallback inside the strategy itself — that must not
+happen. Step 2's manual verification also records the probe's own cost (one extra `CreateFile`+`CloseHandle`
+against `OpenVolume`) relative to a full MFT scan, to confirm it is negligible rather than assuming it.
+
 ## Strategies
 
 ### `MftScanner` (Step 2)
@@ -343,7 +354,10 @@ Every strategy keeps satisfying its own existing independent-oracle tests, uncha
   that matches `dirsizer-mft.exe C:\`'s own result at the substance level (root/directory sizes, counts — via
   the `MftScanner` adapter's mapping, same "substance, not raw JSON" comparison as Step 1, not a snapshot
   equality check); also run it from a normal, non-elevated console and confirm `strategy=filesystem` with no
-  error.
+  error. Same elevated run also records the probe's own cost (`--benchmark`'s `open_ms`-equivalent for the
+  probe, or a manual timer around it) against the real scan's total time, to confirm it is negligible rather
+  than assumed — expected to be milliseconds against a multi-second MFT scan, but this is stated as something
+  to check, not asserted in advance.
 - **Step 3**: same split — automated fake-based selector test (a fake MFT strategy throws
   `StrategyUnavailableException`, a fake FSCTL strategy succeeds, proving the two-level chain end to end,
   including that FSCTL is genuinely reachable when MFT is not — this is the only place that combination is
