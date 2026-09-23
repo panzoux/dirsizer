@@ -238,4 +238,20 @@ static partial class IndexSelfTests
         IndexUpdater.Apply(records, [], metadata, source);
         AssertEqual(200L, records[0].LogicalSize, "the $MFT size is current without a journal entry");
     }
+
+    static void ValidityRulesDecideBetweenUpdateAndRebuild()
+    {
+        var index = new VolumeIndex(TestIdentity, 7, 1000, DateTime.UnixEpoch, new Dictionary<ulong, FileRecord>());
+        var journal = new JournalState(7, 500, 2000);
+        AssertEqual((string?)null, IndexValidity.Check(index, TestIdentity, journal), "same volume, same journal, position still held: update");
+        AssertEqual((string?)null, IndexValidity.Check(index, TestIdentity, journal with { FirstUsn = 1000, NextUsn = 1000 }), "the edges are inclusive");
+        AssertContains(IndexValidity.Check(index, TestIdentity with { SerialNumber = 1 }, journal), "not the one", "another volume");
+        AssertContains(IndexValidity.Check(index, TestIdentity with { RecordSize = 4096 }, journal), "not the one", "another geometry");
+        AssertContains(IndexValidity.Check(index, TestIdentity, null), "no active USN journal", "journal disabled");
+        AssertContains(IndexValidity.Check(index, TestIdentity, journal with { JournalId = 8 }), "recreated", "journal recreated");
+        AssertContains(IndexValidity.Check(index, TestIdentity, journal with { FirstUsn = 1001 }), "wrapped", "saved position no longer in the journal");
+        AssertContains(IndexValidity.Check(index, TestIdentity, journal with { NextUsn = 999 }), "ahead", "saved position after the journal's end");
+        index.JournalId = 0;
+        AssertContains(IndexValidity.Check(index, TestIdentity, journal), "without a USN journal", "index written without a journal");
+    }
 }

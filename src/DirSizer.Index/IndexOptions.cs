@@ -10,6 +10,7 @@ sealed class IndexOptions
     public bool Benchmark { get; private set; }
     public bool NoSave { get; private set; }
     public bool Verify { get; private set; }
+    public bool Rebuild { get; private set; }
     public string IndexDirectory { get; private set; } = IndexFile.DefaultDirectory;
 
     public static IndexOptions Parse(string[] args)
@@ -25,6 +26,7 @@ sealed class IndexOptions
             if (arg == "--json") { result.Json = true; continue; }
             if (arg == "--no-save") { result.NoSave = true; continue; }
             if (arg == "--verify") { result.Verify = true; continue; }
+            if (arg == "--rebuild") { result.Rebuild = true; continue; }
             if (arg.StartsWith("--index-dir=", StringComparison.Ordinal) && arg.Length > "--index-dir=".Length) { result.IndexDirectory = Path.GetFullPath(arg["--index-dir=".Length..]); continue; }
             if (arg.StartsWith("--index-dir", StringComparison.Ordinal)) throw new ArgumentException("Use --index-dir=DIRECTORY.");
             if (arg.StartsWith("--top=", StringComparison.Ordinal) && int.TryParse(arg[6..], out var top)) { result.Top = Math.Max(1, top); continue; }
@@ -36,28 +38,35 @@ sealed class IndexOptions
             result.Target = arg.Length == 2 && arg[1] == ':' ? arg + "\\" : arg;
         }
         if (!result.Help && !result.SelfTest && result.Target.Length == 0) throw new ArgumentException("A drive root is required, for example C:\\.");
-        if (result.Verify && result.NoSave) throw new ArgumentException("--verify loads the saved index back; it cannot be combined with --no-save.");
         return result;
     }
 
     public static void PrintHelp()
     {
         Console.WriteLine("""
-            dirsizer-index - EXPERIMENTAL: folder sizes from a saved, per-volume NTFS index
+            dirsizer-index - EXPERIMENTAL: folder sizes from a per-volume NTFS index kept up to date by the USN journal
 
-            Usage: dirsizer-index C:\ [--top=N] [--files] [--json] [--verify] [--no-save] [--index-dir=DIR] [--benchmark]
+            Usage: dirsizer-index C:\ [--top=N] [--files] [--json] [--rebuild] [--verify] [--no-save] [--index-dir=DIR] [--benchmark]
 
             --top=N          Show the largest N results (default: 25)
             --files          Include largest files
             --json           Write machine-readable JSON to stdout
-            --verify         Load the saved index back and compare it with the scan (exit code 2 if they differ)
-            --no-save        Do not write the index
+            --rebuild        Ignore the saved index and scan the whole $MFT again
+            --verify         Also scan the whole $MFT and compare it with the index, record by record
+                             (exit code 2 if they differ; use on a volume nothing else is writing to)
+            --no-save        Do not write the index back
             --index-dir=DIR  Where index files are kept (default: %LOCALAPPDATA%\dirsizer\index)
             --benchmark      Print phase timings to stderr
             --self-test      Run the built-in tests
             -h               Show this help
 
-            Reads the whole $MFT like dirsizer-mft and saves the records as <volume serial>.dsix.
+            The first run reads the whole $MFT (like dirsizer-mft) and saves an index of the volume. Later
+            runs load it, read the USN change journal from where it left off, and read again only the MFT
+            records the journal names. A full scan runs instead, with the reason on stderr, when there is no
+            usable index: none yet, another volume, the journal was recreated, wrapped or disabled, or the
+            file is damaged. Changes made while the volume was used by a system that does not write the USN
+            journal (another operating system) are not seen: use --rebuild after that.
+
             The index file lists every file and directory name on the volume. In the default location only
             the current user, SYSTEM and Administrators can read it.
             Requires Administrator: the executable asks for elevation when it starts.

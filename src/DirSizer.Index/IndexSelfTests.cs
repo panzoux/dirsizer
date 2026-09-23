@@ -34,6 +34,7 @@ static partial class IndexSelfTests
             new("update: a record that became an extension record is dropped", UpdateDropsARecordThatBecameAnExtension),
             new("update: an unreadable extension record asks for a full scan", UnreadableExtensionAsksForARebuild),
             new("update: NTFS metadata records are read again without journal entries", MetadataRecordsAreAlwaysReread),
+            new("validity: identity and journal rules decide between update and full scan", ValidityRulesDecideBetweenUpdateAndRebuild),
         };
 
         var failed = 0;
@@ -93,7 +94,7 @@ static partial class IndexSelfTests
         var defaults = IndexOptions.Parse(["C:"]);
         AssertEqual("C:\\", defaults.Target, "a bare drive letter becomes its root");
         AssertEqual(25, defaults.Top, "default top");
-        Assert(!defaults.Files && !defaults.Json && !defaults.Benchmark && !defaults.NoSave && !defaults.Verify, "default flags");
+        Assert(!defaults.Files && !defaults.Json && !defaults.Benchmark && !defaults.NoSave && !defaults.Verify && !defaults.Rebuild, "default flags");
         AssertEqual(IndexFile.DefaultDirectory, defaults.IndexDirectory, "default index directory");
         Assert(defaults.IndexDirectory.EndsWith("dirsizer\\index", StringComparison.OrdinalIgnoreCase), $"under LOCALAPPDATA: {defaults.IndexDirectory}");
 
@@ -102,6 +103,8 @@ static partial class IndexSelfTests
         Assert(all.Files && all.Json && all.Benchmark && all.Verify, "flags");
         AssertEqual("X:\\idx", all.IndexDirectory, "--index-dir");
         Assert(IndexOptions.Parse(["D:\\", "--no-save"]).NoSave, "--no-save");
+        Assert(IndexOptions.Parse(["D:\\", "--rebuild"]).Rebuild, "--rebuild");
+        Assert(IndexOptions.Parse(["D:\\", "--verify", "--no-save"]).Verify, "--verify with --no-save compares with a fresh scan");
     }
 
     static void OptionsRejectBadInput()
@@ -110,7 +113,5 @@ static partial class IndexSelfTests
         AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "D:\\"]), "two paths");
         AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--strategy=mft"]), "an unknown option");
         AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--top=x"]), "--top without a number");
-        AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--index-dir"]), "--index-dir without a directory");
-        AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--verify", "--no-save"]), "--verify needs the saved index");
-    }
+        AssertThrows<ArgumentException>(() => IndexOptions.Parse(["C:\\", "--index-dir"]), "--index-dir without a directory");    }
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Win32.SafeHandles;
 
 // Phase timings of one run. Phases that did not run stay zero.
 sealed class IndexTimings
@@ -21,35 +22,51 @@ sealed record IndexRun(
 
 static class IndexRunner
 {
-    // I2: always a full scan; the index is saved, and --verify loads it back and compares it with that scan.
     public static IndexRun Run(IndexOptions options)
     {
         var timings = new IndexTimings();
         var total = Stopwatch.StartNew();
         var timer = new Stopwatch();
         var volume = DriveRoot.Validate(options.Target);
-        BulkNative.VolumeData data;
-        JournalState? journal;
-        using (var handle = BulkNative.OpenVolume($"\\\\.\\{volume}"))
-        {
-            data = BulkNative.ReadVolumeData(handle, volume);
-            // Read before the scan: whatever changes during the scan is seen again by the next update (harmless).
-            journal = UsnJournal.Query(handle);
-        }
+        using var handle = BulkNative.OpenVolume($"\\\\.\\{volume}");
+        var data = BulkNative.ReadVolumeData(handle, volume);
         var identity = VolumeIdentity.From(data);
+        // Read before anything else: whatever changes after this point is seen again by the next run (harmless).
+        var journal = UsnJournal.Query(handle);
         var indexPath = IndexFile.PathFor(options.IndexDirectory, identity.SerialNumber);
 
-        timer.Restart();
-        var outcome = BulkScanner.Scan(new BulkScanSettings(volume, Progress: new ScanProgress()));
-        timings.Scan = timer.Elapsed;
-        var index = new VolumeIndex(identity, journal?.JournalId ?? 0, journal?.NextUsn ?? 0, DateTime.UtcNow, outcome.Pipeline.Records)
+        VolumeIndex? index = null;
+        UpdateResult? update = null;
+        string? reason;
+        if (options.Rebuild) reason = "--rebuild was given";
+        else
         {
-            Relationships = outcome.Pipeline.Relationships,
-        };
+            timer.Restart();
+            index = IndexFile.TryLoad(indexPath, out reason);
+            timings.Load = timer.Elapsed;
+            if (index is not null) reason = IndexValidity.Check(index, identity, journal);
+            if (index is not null && reason is null) reason = Update(index, handle, data, journal!.Value, timings, out update);
+            if (reason is not null) index = null;
+        }
+
+        var mode = "incremental";
+        var stable = true;
+        if (index is null)
+        {
+            mode = "full";
+            timer.Restart();
+            var outcome = BulkScanner.Scan(new BulkScanSettings(volume, Progress: new ScanProgress()));
+            timings.Scan = timer.Elapsed;
+            stable = outcome.IsStable;
+            index = new VolumeIndex(identity, journal?.JournalId ?? 0, journal?.NextUsn ?? 0, DateTime.UtcNow, outcome.Pipeline.Records)
+            {
+                Relationships = outcome.Pipeline.Relationships,
+            };
+        }
 
         var saved = false;
         long indexBytes = 0;
-        if (!options.NoSave && outcome.IsStable)
+        if (!options.NoSave && stable)
         {
             timer.Restart();
             IndexFile.Save(index, indexPath);
@@ -58,25 +75,45 @@ static class IndexRunner
             indexBytes = new FileInfo(indexPath).Length;
         }
 
-        VerifyResult? verify = null;
-        if (options.Verify && saved)
-        {
-            timer.Restart();
-            var loaded = IndexFile.Read(File.ReadAllBytes(indexPath));
-            timings.Load = timer.Elapsed;
-            timer.Restart();
-            loaded.Recompute();
-            timings.Recompute = timer.Elapsed;
-            timer.Restart();
-            verify = IndexVerifier.Compare(loaded.Records, index.Records);
-            timings.Verify = timer.Elapsed;
-        }
-
         timer.Restart();
         var result = SubtreeQuery.Query(index.Records, volume, index.Records[SubtreeQuery.RootRecord], options.Top);
         timings.Query = timer.Elapsed;
+
+        VerifyResult? verify = null;
+        if (options.Verify)
+        {
+            // The index as it is now must equal a fresh full scan (on a quiescent volume; a live one changes in between).
+            timer.Restart();
+            var fresh = BulkScanner.Scan(new BulkScanSettings(volume, Progress: new ScanProgress()));
+            verify = IndexVerifier.Compare(index.Records, fresh.Pipeline.Records);
+            timings.Verify = timer.Elapsed;
+        }
         timings.Total = total.Elapsed;
-        return new IndexRun(result with { TotalMs = timings.Total.TotalMilliseconds }, "full", null, indexPath, indexBytes, saved, outcome.IsStable,
-            index.Records.Count, index.JournalId, index.NextUsn, null, verify, timings);
+        return new IndexRun(result with { TotalMs = timings.Total.TotalMilliseconds }, mode, reason, indexPath, indexBytes, saved, stable,
+            index.Records.Count, index.JournalId, index.NextUsn, update, verify, timings);
+    }
+
+    // Returns null when the index is now current, or the reason a full scan is needed instead.
+    static string? Update(VolumeIndex index, SafeFileHandle handle, BulkNative.VolumeData data, JournalState journal, IndexTimings timings, out UpdateResult? update)
+    {
+        update = null;
+        var timer = Stopwatch.StartNew();
+        var changes = new List<UsnChange>();
+        var buffer = new byte[1 << 20];
+        var next = UsnJournal.ReadChanges(start => UsnJournal.Fetch(handle, journal.JournalId, start, buffer), index.NextUsn, changes);
+        timings.Usn = timer.Elapsed;
+        if (next is null) return "the USN journal no longer holds the saved position (it wrapped)";
+
+        timer.Restart();
+        update = IndexUpdater.Apply(index.Records, changes, IndexUpdater.MetadataRecords(index.Records), new FsctlRecordSource(handle, data.RecordSize, data.BytesPerCluster));
+        timings.Update = timer.Elapsed;
+        if (update.RebuildReason is not null) return update.RebuildReason;
+
+        index.NextUsn = next.Value;
+        index.WrittenUtc = DateTime.UtcNow;
+        timer.Restart();
+        index.Recompute();
+        timings.Recompute += timer.Elapsed;
+        return null;
     }
 }
