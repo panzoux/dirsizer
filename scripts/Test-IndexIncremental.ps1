@@ -14,7 +14,8 @@
   the end the journal is active (with a new id). Index files go to a temporary directory. Refuses volumes that are not
   NTFS or not labelled NTFSTEST (-AllowAnyLabel overrides). Needs an elevated shell and a Release build. Nothing else
   may write to the volume while it runs, because --verify compares with a fresh scan. fsutil output is localized, so
-  only its exit codes are used.
+  only its exit codes are used, and the journal's maximum size is read by position; a journal below 32 MiB (the 1 MiB
+  default wraps while $MFT grows) is replaced at the start.
   Exit code 0 only if every check passed.
 #>
 param(
@@ -68,6 +69,15 @@ function Get-MftSlots {
     [long]($Matches[1] -replace ',', '')
 }
 function Test-Journal { $null = fsutil usn queryjournal $Volume 2>&1; $LASTEXITCODE -eq 0 }
+# The journal's maximum size in bytes, or 0 without a journal. fsutil's labels are localized, so the value is taken by
+# position: the sixth hexadecimal number (ID, first USN, next USN, lowest valid USN, max USN, maximum size).
+function Get-JournalMaxSize {
+    $text = fsutil usn queryjournal $Volume 2>&1
+    if ($LASTEXITCODE -ne 0) { return 0 }
+    $values = [regex]::Matches(($text -join "`n"), '0x([0-9a-fA-F]+)')
+    if ($values.Count -lt 6) { throw "cannot read the journal size from fsutil: $text" }
+    [Convert]::ToInt64($values[5].Groups[1].Value, 16)
+}
 function Set-Journal([bool]$Active) {
     $null = fsutil usn deletejournal /d $Volume 2>&1
     for ($i = 0; $i -lt 50 -and (Test-Journal); $i++) { Start-Sleep -Milliseconds 200 }
@@ -82,7 +92,9 @@ function Set-Journal([bool]$Active) {
 
 try {
     if (Test-Path $root) { Remove-Item -Recurse -Force $root }
-    if (-not (Test-Journal)) { "creating a USN journal on $Volume"; Set-Journal $true }
+    # The $MFT-growth step writes thousands of journal entries; the 1 MiB default journal would wrap during it.
+    $journalSize = Get-JournalMaxSize
+    if ($journalSize -lt 33554432) { "creating a 32 MiB USN journal on $Volume (maximum size was $journalSize bytes)"; Set-Journal $true }
 
     # In the base file from the first run, and deleted later: a delta must then remove it (records created after the
     # base file and deleted again never reach a delta's removed list).
@@ -187,6 +199,19 @@ try {
     Check 'subtree: same size as in the whole-volume listing' ($fromWhole.Count -eq 1 -and $fromWhole[0].size -eq $r.Json.root.size)
     $r = Invoke-Index "$root\plain\a.bin"
     Check 'subtree: a file is refused' ($r.Exit -eq 1 -and $r.Stderr -match 'is a file') $r.Stderr
+
+    '--- changes since the previous run (the cleanup workflow)'
+    $null = Invoke-Index "$Volume\"                                    # baseline: the saved index matches the volume
+    Remove-Item "$root\plain\sub\b-renamed.bin"                        # 20000 bytes
+    $r = Invoke-Index "$root\plain" @('--changes', '--no-save')
+    Check 'changes: root delta -20000' ($r.Json.changes.root_delta -eq -20000) "root_delta=$($r.Json.changes.root_delta)"
+    $sub = @($r.Json.changes.shrunk | Where-Object path -eq "$root\plain\sub")
+    Check 'changes: sub shrank by 20000' ($sub.Count -eq 1 -and $sub[0].delta -eq -20000)
+    Check 'changes: nothing grew below plain' (@($r.Json.changes.grew).Count -eq 0)
+    $r = Invoke-Index "$root\plain" @('--changes')
+    Check 'changes with --no-save before: same baseline' ($r.Json.changes.root_delta -eq -20000) "root_delta=$($r.Json.changes.root_delta)"
+    $r = Invoke-Index "$root\plain" @('--changes')
+    Check 'changes after saving: nothing left' ($r.Json.changes.root_delta -eq 0 -and @($r.Json.changes.shrunk).Count -eq 0) "root_delta=$($r.Json.changes.root_delta)"
 
     '--- journal recreated: full scan, then incremental again'
     $oldJournal = $r.Json.index.journal_id

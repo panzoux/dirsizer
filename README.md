@@ -25,7 +25,7 @@ The three NTFS tools read the master file table directly; they do not use `FindF
 
 ## The tools
 
-DirSizer is five separate executables, all built from the same underlying code:
+DirSizer is five separate executables, all built from the same underlying code, plus the experimental `dirsizer-index.exe`:
 
 | Tool | What it is for | Notes |
 | --- | --- | --- |
@@ -34,6 +34,7 @@ DirSizer is five separate executables, all built from the same underlying code:
 | `dirsizer-mft.exe` | Fast folder-size scan | **Experimental.** Reads the raw `$MFT` in large blocks. About 1.4x faster than `dirsizer-fsctl` in measurements. Renamed from `dirsizer-bulk.exe`; same implementation. |
 | `dirsizer-fsctl.exe` | The same folder-size scan through `FSCTL_GET_NTFS_FILE_RECORD` | The reference implementation. Use it to cross-check `dirsizer-mft`, to benchmark, or when you want the conservative method. |
 | `dirsizer-inspect.exe` | Looking inside the NTFS `$MFT` | For investigating and developing: one record's attributes, the `$MFT` extents, slot counts, raw-vs-FSCTL comparison. Not a usage scan. |
+| `dirsizer-index.exe` | **Experimental, not in the release zip.** Repeated analysis from a saved per-volume index | Full `$MFT` scan the first time, then only the records the USN journal names. Any directory on the drive; `--changes` lists what shrank and grew since the previous run. See [docs/design_index.md](docs/design_index.md). |
 
 `dirsizer-mft` and `dirsizer-fsctl` take the same options and print the same results; you choose the one you
 want, and neither ever falls back to the other. `dirsizer-fs.exe` has its own options (`--workers`,
@@ -59,6 +60,7 @@ Install the .NET 8 SDK. Each tool is its own project; `DirSizer.Fs.Core` and `Di
 | `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `dirsizer-mft` |
 | `src\DirSizer.Fsctl\DirSizer.Fsctl.csproj` | `dirsizer-fsctl` |
 | `src\DirSizer.Inspect\DirSizer.Inspect.csproj` | `dirsizer-inspect` |
+| `src\DirSizer.Index\DirSizer.Index.csproj` | `dirsizer-index` (experimental) |
 
 Publish a small NativeAOT executable (this needs the Visual Studio C++ build tools):
 

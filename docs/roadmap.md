@@ -195,8 +195,9 @@ Today a non-root path always uses the directory walk (unified-strategy spec); wi
 
 The typical cleanup loop is: analyse → delete unwanted files → analyse again. Today the second step is a full MFT scan and a full re-aggregation. With I2-I4 it becomes: previous index → USN delta → update only the changed parts → re-aggregate.
 
-- [ ] Before/after report: which directories shrank or grew, by how much, since the previous run.
-- [ ] Measure the second run against a full rescan after a realistic cleanup.
+- [x] Before/after report: which directories shrank or grew, by how much, since the previous run. `dirsizer-index --changes` (`ChangeReporter`, design_index.md "Changes since the previous run"; 5 self-tests, mutation-checked: ignoring the sequence number, dropping deleted directories, and counting a directory moved in with its old size each fail a test). On T:, deleting a 20,000-byte file showed -20,000 for the queried folder and its subfolder, `--no-save` kept the baseline for the next run, and a saved run left nothing to report (`Test-IndexIncremental.ps1`, ALL CHECKS PASSED).
+- [x] Measure the second run against a full rescan after a realistic cleanup: C:, 30,000 files (30 MiB) deleted, incremental with `--changes` 3,793 ms vs full 7,369 ms (51 %; without `--changes` 2,787 ms, 38 %); the deleted folder listed with exactly -30,720,000 bytes (medians of 3, one machine, warm cache, JIT Release build).
+- [ ] Only if `--changes` becomes the common case: its cost is about 1 s on C: (a second `Recompute` for the baseline, and a comparison that walks the whole volume for the root). Storing the directory sizes in the index would remove the first; not done.
 
 ### I6 - Candidates after the index exists (not planned)
 

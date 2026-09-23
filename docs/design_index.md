@@ -114,6 +114,19 @@ answer is a walk down the selected parents from that record (`SubtreeQuery`). Th
 Checked against `dirsizer-fs` (an independent directory walk) on a folder without hard links in
 `Test-IndexIncremental.ps1`.
 
+## Changes since the previous run (I5)
+
+With `--changes`, the saved index is aggregated before it is updated, and every directory's size is kept (record
+number and sequence, size, parent, name). After the update, each directory at or below the queried one is compared
+with the same directory before: same record *and* sequence number. A directory that is gone, or whose record was
+reused, is listed by its old path with size 0 after. A directory that was not at or below the queried one before
+(moved in, or new) counts from 0. Changes are listed as "shrunk" and "grew", largest first. A directory's change
+includes everything below it, so the parents of a deleted folder are listed too. The baseline is the index as last
+written. Run with `--no-save` to keep comparing against the same baseline, for example across several cleanup steps.
+If the saved index cannot be updated (journal recreated or wrapped) but describes the same volume, the full scan is
+compared with it, which is still a correct "since the last index" report. Checked in `Test-IndexIncremental.ps1`
+(deleting a 20,000-byte file, with and without `--no-save`).
+
 ## Privacy
 
 The index lists every file and directory name on the volume, including names in directories that the user could
@@ -148,3 +161,12 @@ build and script as above.
 With the fast load: an incremental run on `C:` took 1,939 ms (median), 25 % of a full run (7,809 ms). Load 752 ms,
 `Recompute` 500 ms, query 368 ms, re-reading records 293 ms. Same machine, build and script as above, one day later
 (the unchanged build measured load at 1.6-1.7 s that day).
+
+Cleanup workflow on `C:` (I5): 30,000 files of 1 KiB (30 MiB) created, a baseline run, the folder deleted, then an
+incremental run with `--changes`, then `--rebuild`; 3 rounds, medians. Incremental with `--changes`: 3,793 ms (about
+30,050 journal entries, as many records read again, a delta save of 13 ms), 51 % of a full run (7,369 ms). The deleted
+folder was listed with exactly -30,720,000 bytes, above its `Temp` ancestors. `--changes` itself costs about 1 s on
+`C:`: aggregating the saved index once more for the baseline (`Recompute` about 1,000 ms instead of 500) and the
+comparison (query phase about 860 ms instead of 350). The same cleanup without `--changes`: 2,787 ms (38 %). Update
+(re-reading 30,000 records) about 800 ms, load about 1,050 ms. The index was written to `%TEMP%` on `C:`, so in the
+first round it appeared in its own report as a new 118 MB folder. JIT Release build, one machine, `C:` live and warm.

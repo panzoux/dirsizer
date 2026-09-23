@@ -25,6 +25,7 @@ DirSizer は、同じ実装から構築された 5 つの独立した実行フ�
 | `dirsizer-mft.exe` | 高速フォルダーサイズスキャン | **【実験的機能】** `$MFT` を大容量ブロック単位で直接読み込みます。検証環境では `dirsizer-fsctl` より約 1.4 倍高速に動作しました。`dirsizer-bulk.exe` から改称（実装は同一）。 |
 | `dirsizer-fsctl.exe` | 同上のフォルダーサイズスキャン | `FSCTL_GET_NTFS_FILE_RECORD` を使用するリファレンス実装です。`dirsizer-mft` の動作検証、ベンチマーク、または安全性を重視する環境で使用します。 |
 | `dirsizer-inspect.exe` | NTFS `$MFT` 内部構造の解析 | 開発・調査用ツール。単一レコードの属性解析、`$MFT` エクステント、スロット数の確認、Raw 読み込みと FSCTL の比較などを行います（サイズ集計機能はありません）。 |
+| `dirsizer-index.exe` | **【実験的機能、リリース zip には含まれません】** ボリュームごとに保存したインデックスによる繰り返し分析 | 初回は `$MFT` 全体をスキャンし、以降は USN ジャーナルに記録されたレコードだけを読み直します。ドライブ上の任意のディレクトリを指定できます。`--changes` で前回の実行から縮小・増加したディレクトリを一覧表示します。[docs/design_index.md](docs/design_index.md)（英語）を参照してください。 |
 
 `dirsizer-mft` と `dirsizer-fsctl` は同じコマンドラインオプションを受け付け、同一の結果を出力します。`dirsizer-fs.exe` は独自のオプション（`--workers`、`--strict`、`--enumerator`）を持ちます。`dirsizer.exe` はどのツールよりも小さいオプション集合です（実装方式を指定するオプションはありません）。詳細なオプションは各コマンドの `--help` で確認できます（`dirsizer-inspect --help` が最も詳細です）。
 
@@ -50,6 +51,7 @@ Windows の仕様上、非昇格コンソールから昇格が必要なプロセ
 | `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `dirsizer-mft` |
 | `src\DirSizer.Fsctl\DirSizer.Fsctl.csproj` | `dirsizer-fsctl` |
 | `src\DirSizer.Inspect\DirSizer.Inspect.csproj` | `dirsizer-inspect` |
+| `src\DirSizer.Index\DirSizer.Index.csproj` | `dirsizer-index`（実験的機能） |
 
 依存関係のない単一の NativeAOT 実行ファイルを生成する場合（要 Visual Studio C++ ビルドツール）:
 
