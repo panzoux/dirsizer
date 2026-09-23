@@ -21,7 +21,7 @@ sealed class FileSystemStrategy : IScanStrategy
             result.RootPath, top,
             new UnifiedItem(result.Root.Path, result.Root.Size),
             Items(result.RootChildren), Items(result.Directories), Items(result.Files),
-            c.DirectoriesScanned, c.DirectoriesDenied + c.DirectoriesFailed, c.Files, c.Bytes, result.ErrorSamples,
+            c.DirectoriesScanned, c.DirectoriesDenied + c.DirectoriesFailed, c.Files, result.ErrorSamples,
             "filesystem", null, null, result.Metrics.Total.TotalMilliseconds);
     }
 

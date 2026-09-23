@@ -26,7 +26,12 @@ static class UnifiedOutput
             }
             output.WriteLine();
             output.WriteLine("Summary");
-            output.WriteLine($"strategy={result.Strategy} directories_scanned={result.DirectoriesScanned} unreadable={result.Unreadable} files={result.FileCount} bytes={result.Bytes}");
+            // strategy and the scanned path first (what ran, on what); directories_scanned/unreadable grouped
+            // together (unreadable counts directories -- for the filesystem strategy always; for mft/fsctl the
+            // closest analogue, MFT records that could not be read/parsed -- see UnifiedScanResult's own doc
+            // comment); no separate byte total, since it always equals the root's own size, already shown above
+            // in the Directories table.
+            output.WriteLine($"strategy={result.Strategy} path={result.Volume} directories_scanned={result.DirectoriesScanned} unreadable={result.Unreadable} files={result.FileCount}");
         }
         if (result.Unreadable > 0)
         {
@@ -46,7 +51,7 @@ static class UnifiedOutput
         result.Volume, top, "logical",
         new JsonUnifiedItem(result.Root.Path, result.Root.Size),
         Items(result.RootChildren), Items(result.Directories), Items(result.Files),
-        new JsonUnifiedStatistics(result.DirectoriesScanned, result.Unreadable, result.FileCount, result.Bytes, result.ErrorSamples,
+        new JsonUnifiedStatistics(result.DirectoriesScanned, result.Unreadable, result.FileCount, result.ErrorSamples,
             new JsonUnifiedPerformance(result.Strategy, result.StrategyFallback, result.StrategyFallbackReason, result.TotalMs)));
 
     static JsonUnifiedItem[] Items(UnifiedItem[] items)
@@ -59,7 +64,7 @@ static class UnifiedOutput
 
 sealed record JsonUnifiedOutput(string Volume, int Top, string SizeMode, JsonUnifiedItem Root, JsonUnifiedItem[] RootChildren, JsonUnifiedItem[] Directories, JsonUnifiedItem[] Files, JsonUnifiedStatistics Statistics);
 sealed record JsonUnifiedItem(string Path, long Size);
-sealed record JsonUnifiedStatistics(long DirectoriesScanned, long Unreadable, long FileCount, long Bytes, string[] ErrorSamples, JsonUnifiedPerformance Performance);
+sealed record JsonUnifiedStatistics(long DirectoriesScanned, long Unreadable, long FileCount, string[] ErrorSamples, JsonUnifiedPerformance Performance);
 sealed record JsonUnifiedPerformance(string Strategy, string? StrategyFallback, string? StrategyFallbackReason, double TotalMs);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]

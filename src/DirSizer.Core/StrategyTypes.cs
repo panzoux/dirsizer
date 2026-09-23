@@ -28,10 +28,16 @@ public static class VolumeInfo
 // dirsizer.exe's own, uniform result -- every IScanStrategy adapts its native result into this. Dedicated
 // executables are unaffected: they call their native Scan/Run method directly and print their own, unchanged,
 // richer output. See the design spec, "IScanStrategy".
+// No separate total-bytes field: both adapters set Root.Size to the same value a separate "bytes" total would
+// have had (the root's own size already *is* the scan's total), so a distinct field would only ever repeat it.
+// Unreadable counts directories, for the filesystem strategy (DirectoriesDenied + DirectoriesFailed). For
+// mft/fsctl it is the closest existing analogue instead -- MFT records that could not be read or parsed,
+// which are not necessarily directory records -- used consistently rather than adding a strategy-specific
+// field, even though the underlying reason differs (see the design spec, "IScanStrategy").
 public sealed record UnifiedScanResult(
     string Volume, int Top,
     UnifiedItem Root, UnifiedItem[] RootChildren, UnifiedItem[] Directories, UnifiedItem[] Files,
-    long DirectoriesScanned, long Unreadable, long FileCount, long Bytes, string[] ErrorSamples,
+    long DirectoriesScanned, long Unreadable, long FileCount, string[] ErrorSamples,
     string Strategy, string? StrategyFallback, string? StrategyFallbackReason, double TotalMs);
 
 public readonly record struct UnifiedItem(string Path, long Size);

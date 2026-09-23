@@ -18,6 +18,7 @@ static class DirSizerSelfTests
             new("options: defaults and the documented set are accepted", UnifiedCliOptionsAcceptsTheDocumentedSet),
             new("selector moves to the next strategy only on StrategyUnavailableException, nothing else", SelectorFallsBackOnlyOnStrategyUnavailable),
             new("selector tries two levels: mft unavailable, fsctl available", SelectorTriesTwoLevelsOfFallback),
+            new("text Summary line: strategy and path first, unreadable next to directories_scanned, no redundant bytes", TextSummaryLineIsOrderedAndHasNoRedundantBytes),
         };
 
         var failed = 0;
@@ -79,7 +80,6 @@ static class DirSizerSelfTests
         AssertEqual(c.DirectoriesScanned, unified.DirectoriesScanned, "directories_scanned");
         AssertEqual(c.DirectoriesDenied + c.DirectoriesFailed, unified.Unreadable, "unreadable");
         AssertEqual(c.Files, unified.FileCount, "file_count");
-        AssertEqual(c.Bytes, unified.Bytes, "bytes");
         AssertEqual(fsResult.Directories.Length, unified.Directories.Length, "directories count");
         AssertEqual(fsResult.Files.Length, unified.Files.Length, "files count");
 
@@ -140,7 +140,7 @@ static class DirSizerSelfTests
     }
 
     static UnifiedScanResult FixedResult(string strategy) =>
-        new("C:\\", 25, new UnifiedItem("C:\\", 1), [], [], [], 1, 0, 0, 1, [], strategy, null, null, 1.0);
+        new("C:\\", 25, new UnifiedItem("C:\\", 1), [], [], [], 1, 0, 0, [], strategy, null, null, 1.0);
 
     static void SelectorFallsBackOnlyOnStrategyUnavailable()
     {
@@ -190,5 +190,22 @@ static class DirSizerSelfTests
         ];
         var result = ScanStrategySelector.Scan("C:\\", new UnifiedScanOptions(25, false, true, false, 0), mftUnavailableFsctlAvailable);
         AssertEqual("fsctl", result.Strategy, "the second strategy's result is used when the first is unavailable");
+    }
+
+    static void TextSummaryLineIsOrderedAndHasNoRedundantBytes()
+    {
+        var result = FixedResult("mft") with { Volume = @"C:\", DirectoriesScanned = 42, Unreadable = 3, FileCount = 100 };
+        var options = UnifiedCliOptions.Parse([@"C:\"]);
+        var output = new StringWriter();
+        UnifiedOutput.Write(result, options, output, new StringWriter());
+        string? summary = null;
+        foreach (var line in output.ToString().Split('\n'))
+        {
+            if (line.StartsWith("strategy=")) summary = line;
+        }
+        Assert(summary is not null, "the Summary line is printed");
+        Assert(summary!.StartsWith("strategy=mft path=C:\\ "), $"strategy and path come first: {summary}");
+        Assert(summary.Contains("directories_scanned=42 unreadable=3 "), $"unreadable stays next to directories_scanned: {summary}");
+        Assert(!summary.Contains("bytes="), $"no redundant bytes field (the root's size, shown in the Directories table above, already is the total): {summary}");
     }
 }

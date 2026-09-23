@@ -13,7 +13,7 @@ static class ScanResultAdapter
             Items(result, result.RootChildren, record => record.IsDirectory ? record.Size : record.LogicalSize),
             Items(result, result.Directories, record => record.Size),
             Items(result, result.Files, record => record.LogicalSize),
-            result.Scanned, result.Skipped, CountFiles(result), result.Root.Size, [],
+            result.Scanned, result.Skipped, CountFiles(result), [],
             strategy, null, null, totalMs);
     }
 
