@@ -44,6 +44,7 @@ static partial class IndexSelfTests
             new("delta: used only while it stays small", DeltaIsUsedOnlyWhileItStaysSmall),
             new("index file: a file of several read pieces loads exactly and is checked piece by piece", LargeFileIsReadAndCheckedPieceByPiece),
             new("update: the entries it replaced or removed are recorded", UpdateRecordsWhichEntriesChanged),
+            new("path: resolved by Windows to the record; missing, file and other-volume cases are refused", PathResolverFindsTheDirectoryRecord),
         };
 
         var failed = 0;

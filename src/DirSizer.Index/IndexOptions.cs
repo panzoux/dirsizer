@@ -37,7 +37,7 @@ sealed class IndexOptions
             // "C:" alone would mean the current directory on C:; it is taken as the drive root, as the other tools do.
             result.Target = arg.Length == 2 && arg[1] == ':' ? arg + "\\" : arg;
         }
-        if (!result.Help && !result.SelfTest && result.Target.Length == 0) throw new ArgumentException("A drive root is required, for example C:\\.");
+        if (!result.Help && !result.SelfTest && result.Target.Length == 0) throw new ArgumentException("A directory is required, for example C:\\ or C:\\Users.");
         return result;
     }
 
@@ -46,7 +46,7 @@ sealed class IndexOptions
         Console.WriteLine("""
             dirsizer-index - EXPERIMENTAL: folder sizes from a per-volume NTFS index kept up to date by the USN journal
 
-            Usage: dirsizer-index C:\ [--top=N] [--files] [--json] [--rebuild] [--verify] [--no-save] [--index-dir=DIR] [--benchmark]
+            Usage: dirsizer-index <directory> [--top=N] [--files] [--json] [--rebuild] [--verify] [--no-save] [--index-dir=DIR] [--benchmark]
 
             --top=N          Show the largest N results (default: 25)
             --files          Include largest files
@@ -59,6 +59,10 @@ sealed class IndexOptions
             --benchmark      Print phase timings to stderr
             --self-test      Run the built-in tests
             -h               Show this help
+
+            <directory> is any directory on a local NTFS drive (C:\, C:\Users\me\Downloads). The index always
+            covers the whole volume; the answer covers only that directory. Junctions and mount points are
+            followed as Windows follows them, but the directory must be on the same volume.
 
             The first run reads the whole $MFT (like dirsizer-mft) and saves an index of the volume. Later
             runs load it, read the USN change journal from where it left off, and read again only the MFT

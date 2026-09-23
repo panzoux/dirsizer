@@ -58,4 +58,34 @@ static partial class IndexSelfTests
         AssertEqual(0, document.RootElement.GetProperty("verify").GetProperty("differences").GetInt32(), "json verify.differences");
         AssertEqual(180L, document.RootElement.GetProperty("root").GetProperty("size").GetInt64(), "json root.size");
     }
+
+    static void PathResolverFindsTheDirectoryRecord()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "dirsizer-index-path-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(directory, "sub"));
+        File.WriteAllBytes(Path.Combine(directory, "f.bin"), [1, 2, 3]);
+        try
+        {
+            var (serial, reference) = PathResolver.Identify(directory);
+            var (_, sub) = PathResolver.Identify(Path.Combine(directory, "sub"));
+            Assert(reference != sub && reference.RecordNumber != 0, "two directories, two records");
+            var records = new Dictionary<ulong, FileRecord> { [reference.RecordNumber] = new FileRecord(reference, reference.SequenceNumber, true) };
+            var index = new VolumeIndex(TestIdentity with { SerialNumber = serial }, 1, 1, DateTime.UnixEpoch, records);
+            AssertEqual(reference, PathResolver.Find(index, directory).Reference, "found by its record and sequence number");
+            AssertThrowsWithMessage<ArgumentException>(() => PathResolver.Find(index, Path.Combine(directory, "sub")), "not in the index", "a directory the index does not have");
+            var reused = new FileRef(reference.FullReference ^ (1UL << 48));
+            var staleRecords = new Dictionary<ulong, FileRecord> { [reference.RecordNumber] = new FileRecord(reused, reused.SequenceNumber, true) };
+            var stale = new VolumeIndex(TestIdentity with { SerialNumber = serial }, 1, 1, DateTime.UnixEpoch, staleRecords);
+            AssertThrowsWithMessage<ArgumentException>(() => PathResolver.Find(stale, directory), "not in the index", "the same record number with another sequence number");
+            var (_, file) = PathResolver.Identify(Path.Combine(directory, "f.bin"));
+            records[file.RecordNumber] = new FileRecord(file, file.SequenceNumber, false);
+            AssertThrowsWithMessage<ArgumentException>(() => PathResolver.Find(index, Path.Combine(directory, "f.bin")), "is a file", "a file");
+            var otherVolume = new VolumeIndex(TestIdentity with { SerialNumber = serial + 1L }, 1, 1, DateTime.UnixEpoch, records);
+            AssertThrowsWithMessage<ArgumentException>(() => PathResolver.Find(otherVolume, directory), "not on the indexed volume", "another volume's index");
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
 }

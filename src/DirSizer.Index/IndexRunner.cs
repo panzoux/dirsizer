@@ -29,7 +29,11 @@ static class IndexRunner
         var timings = new IndexTimings();
         var total = Stopwatch.StartNew();
         var timer = new Stopwatch();
-        var volume = DriveRoot.Validate(options.Target);
+        var target = Path.GetFullPath(options.Target);
+        var pathRoot = Path.GetPathRoot(target);
+        if (pathRoot is null || pathRoot.Length != 3 || pathRoot[1] != ':')
+            throw new ArgumentException($"{options.Target}: dirsizer-index works on local drives only (a path such as C:\\Users).");
+        var volume = DriveRoot.Validate(pathRoot);
         using var handle = BulkNative.OpenVolume($"\\\\.\\{volume}");
         var data = BulkNative.ReadVolumeData(handle, volume);
         var identity = VolumeIdentity.From(data);
@@ -91,7 +95,8 @@ static class IndexRunner
         }
 
         timer.Restart();
-        var result = SubtreeQuery.Query(index.Records, volume, index.Records[SubtreeQuery.RootRecord], options.Top);
+        var root = PathResolver.Find(index, target);
+        var result = SubtreeQuery.Query(index.Records, volume, root, options.Top);
         timings.Query = timer.Elapsed;
 
         VerifyResult? verify = null;
