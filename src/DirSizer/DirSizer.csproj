@@ -19,5 +19,13 @@
   <ItemGroup>
     <ProjectReference Include="..\DirSizer.Fs.Core\DirSizer.Fs.Core.csproj" />
     <ProjectReference Include="..\DirSizer.Core\DirSizer.Core.csproj" />
+    <Compile Include="..\Shared\Cli.cs" />
+    <Compile Include="..\Shared\DriveRoot.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReader.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkStability.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkScanner.cs" />
+    <Compile Include="..\Shared\BulkReader\BulkReport.cs" />
+    <Compile Include="..\DirSizer.Bulk\BulkIntegration.cs" />
+    <Compile Include="..\Shared\ScanResultAdapter.cs" />
   </ItemGroup>
 </Project>

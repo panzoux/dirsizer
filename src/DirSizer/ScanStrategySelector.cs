@@ -28,5 +28,11 @@ static class ScanStrategySelector
         throw new InvalidOperationException("No scan strategy is available.", lastUnavailable);
     }
 
-    static IScanStrategy[] CandidateStrategies(string rootPath) => [new FileSystemStrategy()];
+    static IScanStrategy[] CandidateStrategies(string rootPath)
+    {
+        string drive;
+        try { drive = DriveRoot.Validate(rootPath); }
+        catch (ArgumentException) { return [new FileSystemStrategy()]; }
+        return VolumeInfo.IsNtfs(drive) ? [new MftStrategy(), new FileSystemStrategy()] : [new FileSystemStrategy()];
+    }
 }
