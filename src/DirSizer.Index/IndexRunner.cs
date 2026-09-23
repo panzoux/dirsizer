@@ -16,7 +16,7 @@ sealed record UpdateResult(int Changes, int Reread, int Replaced, int Removed, i
 sealed record IndexRun(
     UnifiedScanResult Result, string Mode, string? RebuildReason, string IndexPath, long IndexBytes, bool Saved, bool Stable,
     int RecordCount, ulong JournalId, long NextUsn, UpdateResult? Update, VerifyResult? Verify, IndexTimings Timings,
-    string SaveKind = "none", int DeltaRecords = 0, long DeltaBytes = 0)
+    string SaveKind = "none", int DeltaRecords = 0, long DeltaBytes = 0, ChangeReport? Changes = null)
 {
     // 0 = result written; 2 = --verify found differences; 3 = the full scan was unstable, so the index was not saved.
     public int ExitCode => Verify is { Differences: > 0 } ? 2 : Stable ? 0 : 3;
@@ -43,6 +43,7 @@ static class IndexRunner
 
         VolumeIndex? index = null;
         UpdateResult? update = null;
+        IndexSnapshot? before = null;
         string? reason;
         if (options.Rebuild) reason = "--rebuild was given";
         else
@@ -50,6 +51,14 @@ static class IndexRunner
             timer.Restart();
             index = IndexFile.TryLoad(indexPath, out reason);
             timings.Load = timer.Elapsed;
+            if (index is not null && options.Changes && index.Identity == identity)
+            {
+                // The baseline for --changes: the saved index aggregated as it was, before anything is applied to it.
+                timer.Restart();
+                index.Recompute();
+                timings.Recompute += timer.Elapsed;
+                before = IndexSnapshot.Capture(index);
+            }
             if (index is not null) reason = IndexValidity.Check(index, identity, journal);
             if (index is not null && reason is null) reason = Update(index, handle, data, journal!.Value, timings, out update);
             if (reason is not null) index = null;
@@ -97,6 +106,7 @@ static class IndexRunner
         timer.Restart();
         var root = PathResolver.Find(index, target);
         var result = SubtreeQuery.Query(index.Records, volume, root, options.Top);
+        var changes = before is null ? null : ChangeReporter.Compare(before, index, volume, root, options.Top);
         timings.Query = timer.Elapsed;
 
         VerifyResult? verify = null;
@@ -110,7 +120,7 @@ static class IndexRunner
         }
         timings.Total = total.Elapsed;
         return new IndexRun(result with { TotalMs = timings.Total.TotalMilliseconds }, mode, reason, indexPath, indexBytes, saved, stable,
-            index.Records.Count, index.JournalId, index.NextUsn, update, verify, timings, saveKind, saveKind == "delta" ? index.Dirty.Count : 0, deltaBytes);
+            index.Records.Count, index.JournalId, index.NextUsn, update, verify, timings, saveKind, saveKind == "delta" ? index.Dirty.Count : 0, deltaBytes, changes);
     }
 
     // Returns null when the index is now current, or the reason a full scan is needed instead.

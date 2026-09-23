@@ -49,6 +49,7 @@ static partial class IndexSelfTests
             new("changes: a deleted directory is listed by its old path", ChangesListADeletedDirectoryByItsOldPath),
             new("changes: a reused record is one directory gone and one new", ChangesTreatAReusedRecordAsGoneAndNew),
             new("changes: a directory moved into the queried one counts from 0", ChangesCountADirectoryMovedInAsNew),
+            new("output: changes in text and JSON; a note when there is no earlier index", OutputListsTheChanges),
         };
 
         var failed = 0;
@@ -108,7 +109,7 @@ static partial class IndexSelfTests
         var defaults = IndexOptions.Parse(["C:"]);
         AssertEqual("C:\\", defaults.Target, "a bare drive letter becomes its root");
         AssertEqual(25, defaults.Top, "default top");
-        Assert(!defaults.Files && !defaults.Json && !defaults.Benchmark && !defaults.NoSave && !defaults.Verify && !defaults.Rebuild, "default flags");
+        Assert(!defaults.Files && !defaults.Json && !defaults.Benchmark && !defaults.NoSave && !defaults.Verify && !defaults.Rebuild && !defaults.Changes, "default flags");
         AssertEqual(IndexFile.DefaultDirectory, defaults.IndexDirectory, "default index directory");
         Assert(defaults.IndexDirectory.EndsWith("dirsizer\\index", StringComparison.OrdinalIgnoreCase), $"under LOCALAPPDATA: {defaults.IndexDirectory}");
 
@@ -118,6 +119,7 @@ static partial class IndexSelfTests
         AssertEqual("X:\\idx", all.IndexDirectory, "--index-dir");
         Assert(IndexOptions.Parse(["D:\\", "--no-save"]).NoSave, "--no-save");
         Assert(IndexOptions.Parse(["D:\\", "--rebuild"]).Rebuild, "--rebuild");
+        Assert(IndexOptions.Parse(["D:\\", "--changes"]).Changes, "--changes");
         Assert(IndexOptions.Parse(["D:\\", "--verify", "--no-save"]).Verify, "--verify with --no-save compares with a fresh scan");
     }
 

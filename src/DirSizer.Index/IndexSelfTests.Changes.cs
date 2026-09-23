@@ -68,4 +68,28 @@ static partial class IndexSelfTests
         AssertEqual("T:\\A=120->150", Changes(whole.Grew), "on the whole volume C itself did not change");
         AssertEqual(0L, whole.RootAfter - whole.RootBefore, "the root did not change");
     }
+
+    static void OutputListsTheChanges()
+    {
+        var report = new ChangeReport(new DateTime(2026, 9, 23, 10, 0, 0, DateTimeKind.Utc), 123, 53,
+            [new DirectoryChange("T:\\A", 120, 20)], [new DirectoryChange("T:\\C", 0, 30)]);
+        var run = SampleRun() with { Changes = report };
+        var text = new StringWriter();
+        IndexOutput.Write(run, IndexOptions.Parse(["T:", "--changes"]), text, new StringWriter());
+        AssertContains(text.ToString(), "Changes since 2026-09-23 10:00:00 UTC", "text heading");
+        AssertContains(text.ToString(), "-100\t120\t20\tT:\\A", "text shrunk row");
+        AssertContains(text.ToString(), "+30\t0\t30\tT:\\C", "text grew row");
+
+        var json = new StringWriter();
+        IndexOutput.Write(run, IndexOptions.Parse(["T:", "--json", "--changes"]), json, new StringWriter());
+        using var document = System.Text.Json.JsonDocument.Parse(json.ToString());
+        var changes = document.RootElement.GetProperty("changes");
+        AssertEqual(-70L, changes.GetProperty("root_delta").GetInt64(), "json changes.root_delta");
+        AssertEqual(-100L, changes.GetProperty("shrunk")[0].GetProperty("delta").GetInt64(), "json changes.shrunk[0].delta");
+        AssertEqual("T:\\C", changes.GetProperty("grew")[0].GetProperty("path").GetString(), "json changes.grew[0].path");
+
+        var none = new StringWriter();
+        IndexOutput.Write(SampleRun(), IndexOptions.Parse(["T:", "--changes"]), new StringWriter(), none);
+        AssertContains(none.ToString(), "no earlier index", "stderr when there is nothing to compare with");
+    }
 }

@@ -11,6 +11,7 @@ sealed class IndexOptions
     public bool NoSave { get; private set; }
     public bool Verify { get; private set; }
     public bool Rebuild { get; private set; }
+    public bool Changes { get; private set; }
     public string IndexDirectory { get; private set; } = IndexFile.DefaultDirectory;
 
     public static IndexOptions Parse(string[] args)
@@ -27,6 +28,7 @@ sealed class IndexOptions
             if (arg == "--no-save") { result.NoSave = true; continue; }
             if (arg == "--verify") { result.Verify = true; continue; }
             if (arg == "--rebuild") { result.Rebuild = true; continue; }
+            if (arg == "--changes") { result.Changes = true; continue; }
             if (arg.StartsWith("--index-dir=", StringComparison.Ordinal) && arg.Length > "--index-dir=".Length) { result.IndexDirectory = Path.GetFullPath(arg["--index-dir=".Length..]); continue; }
             if (arg.StartsWith("--index-dir", StringComparison.Ordinal)) throw new ArgumentException("Use --index-dir=DIRECTORY.");
             if (arg.StartsWith("--top=", StringComparison.Ordinal) && int.TryParse(arg[6..], out var top)) { result.Top = Math.Max(1, top); continue; }
@@ -46,12 +48,14 @@ sealed class IndexOptions
         Console.WriteLine("""
             dirsizer-index - EXPERIMENTAL: folder sizes from a per-volume NTFS index kept up to date by the USN journal
 
-            Usage: dirsizer-index <directory> [--top=N] [--files] [--json] [--rebuild] [--verify] [--no-save] [--index-dir=DIR] [--benchmark]
+            Usage: dirsizer-index <directory> [--top=N] [--files] [--json] [--rebuild] [--changes] [--verify] [--no-save] [--index-dir=DIR] [--benchmark]
 
             --top=N          Show the largest N results (default: 25)
             --files          Include largest files
             --json           Write machine-readable JSON to stdout
             --rebuild        Ignore the saved index and scan the whole $MFT again
+            --changes        Also list the directories that shrank or grew since the index was last written
+                             (with --no-save the comparison baseline stays the same run after run)
             --verify         Also scan the whole $MFT and compare it with the index, record by record
                              (exit code 2 if they differ; use on a volume nothing else is writing to)
             --no-save        Do not write the index back
