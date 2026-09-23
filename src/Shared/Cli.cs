@@ -44,6 +44,11 @@ sealed class Options
         return result;
     }
 
+    // For a caller that already has validated values, not raw argv (the unified dirsizer.exe's MftStrategy /
+    // FsctlStrategy). Does not go through Parse's validation -- the caller is responsible for a sane volume string.
+    public static Options From(string volume, int top, bool files, bool dirs) =>
+        new() { Volume = volume, Top = top, Files = files, Dirs = dirs };
+
 
     // The options are the same for both usage-scan tools; each tool supplies its own name and notes.
     public static void PrintHelp(string tool, string notes)

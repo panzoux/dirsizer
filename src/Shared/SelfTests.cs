@@ -13,7 +13,16 @@ static class SelfTests
         ResolverPrefersExactWin32Name();
         AggregationRollsUpToRoot();
         TopSelectionReturnsLargestFirst();
+        VolumeInfoDetectsNtfs();
         Console.WriteLine("P0 self-tests passed.");
+    }
+
+    // VolumeInfo.IsNtfs (DirSizer.Core), used by the unified dirsizer.exe's strategy selector: unlike the rest
+    // of this file, this is a real Win32 call against a real drive, not a synthetic byte-array fixture.
+    static void VolumeInfoDetectsNtfs()
+    {
+        Assert(VolumeInfo.IsNtfs("C:"), "C: is NTFS on this development machine");
+        Assert(!VolumeInfo.IsNtfs("ZZ:"), "a nonexistent drive letter must not throw and must report false");
     }
 
     static void MalformedRecordIsRejected()
