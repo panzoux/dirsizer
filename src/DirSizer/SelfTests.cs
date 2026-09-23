@@ -16,6 +16,7 @@ static class DirSizerSelfTests
             new("unified result matches FsScanner.Scan's own result at the substance level", UnifiedResultMatchesFileSystemScannerSubstance),
             new("--enumerator and other strategy-naming flags are rejected: not part of this CLI", UnifiedCliOptionsRejectsEnumeratorAndStrategyFlags),
             new("options: defaults and the documented set are accepted", UnifiedCliOptionsAcceptsTheDocumentedSet),
+            new("selector moves to the next strategy only on StrategyUnavailableException, nothing else", SelectorFallsBackOnlyOnStrategyUnavailable),
         };
 
         var failed = 0;
@@ -126,5 +127,52 @@ static class DirSizerSelfTests
         AssertEqual(7, all.Top, "--top=N");
         AssertEqual(3, all.Workers, "--workers N");
         Assert(all.Files && all.Json && all.Strict && all.Benchmark, "flags");
+    }
+
+    // A fake IScanStrategy whose Scan() either throws StrategyUnavailableException, throws something else, or
+    // returns a fixed result -- lets the selector's fallback logic be driven deterministically, without a real
+    // NTFS/admin environment. Mirrors FallbackEnumerator's own test shape from the enumerator-fallback work.
+    sealed class FakeStrategy(string name, Func<UnifiedScanResult> behavior) : IScanStrategy
+    {
+        public string Name => name;
+        public UnifiedScanResult Scan(string rootPath, UnifiedScanOptions options) => behavior();
+    }
+
+    static UnifiedScanResult FixedResult(string strategy) =>
+        new("C:\\", 25, new UnifiedItem("C:\\", 1), [], [], [], 1, 0, 0, 1, [], strategy, null, null, 1.0);
+
+    static void SelectorFallsBackOnlyOnStrategyUnavailable()
+    {
+        // Case 1: the first strategy is unavailable -> the second one's result is returned.
+        IScanStrategy[] unavailableThenReal =
+        [
+            new FakeStrategy("fake-unavailable", () => throw new StrategyUnavailableException("fake-unavailable", new InvalidOperationException("no access"))),
+            new FakeStrategy("fake-real", () => FixedResult("fake-real")),
+        ];
+        var result1 = ScanStrategySelector.Scan("C:\\", new UnifiedScanOptions(25, false, true, false, 0), unavailableThenReal);
+        AssertEqual("fake-real", result1.Strategy, "case 1: falls through to the second strategy");
+
+        // Case 2: the first strategy succeeds -> its own result is returned, the second is never reached.
+        var secondCalled = false;
+        IScanStrategy[] realThenTracked =
+        [
+            new FakeStrategy("fake-real", () => FixedResult("fake-real")),
+            new FakeStrategy("fake-unreached", () => { secondCalled = true; return FixedResult("fake-unreached"); }),
+        ];
+        var result2 = ScanStrategySelector.Scan("C:\\", new UnifiedScanOptions(25, false, true, false, 0), realThenTracked);
+        AssertEqual("fake-real", result2.Strategy, "case 2: the first strategy's own result is used");
+        Assert(!secondCalled, "case 2: the second strategy is never called once the first succeeds");
+
+        // Case 3: any other exception is not caught -- it must propagate, not be treated as unavailable.
+        IScanStrategy[] throwsOther = [new FakeStrategy("fake-broken", () => throw new InvalidOperationException("a real scan failure"))];
+        try
+        {
+            ScanStrategySelector.Scan("C:\\", new UnifiedScanOptions(25, false, true, false, 0), throwsOther);
+            throw new Exception("case 3: expected InvalidOperationException to propagate, nothing was thrown");
+        }
+        catch (InvalidOperationException exception)
+        {
+            AssertEqual("a real scan failure", exception.Message, "case 3: the real exception, not swallowed or replaced");
+        }
     }
 }
