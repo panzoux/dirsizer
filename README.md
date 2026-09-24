@@ -16,16 +16,17 @@ root it reads the master file table (MFT) directly; otherwise it walks the direc
 `FindFirstFileExW`, which needs no elevation and works on any filesystem. See
 [dirsizer.exe (the unified entry point)](#dirsizerexe-the-unified-entry-point) below.
 
-The same underlying code is also available as four dedicated executables, for anyone who already knows which
+The same underlying code is also available as five dedicated executables, for anyone who already knows which
 method they want, or for diagnosis, benchmarking and development: `dirsizer-fs.exe` (any filesystem, no
 elevation), `dirsizer-mft.exe` (raw `$MFT`, experimental), `dirsizer-fsctl.exe` (`FSCTL_GET_NTFS_FILE_RECORD`,
-the NTFS reference implementation), and `dirsizer-inspect.exe` (looking inside the `$MFT`, not a usage scan).
-The three NTFS tools read the master file table directly; they do not use `FindFirstFile`,
+the NTFS reference implementation), `dirsizer-inspect.exe` (looking inside the `$MFT`, not a usage scan), and
+`dirsizer-index.exe` (experimental: a saved per-volume index kept current from the USN journal, for repeated
+analysis). The three NTFS scanners read the master file table directly; they do not use `FindFirstFile`,
 `Directory.EnumerateFiles`, the USN journal, or path traversal.
 
 ## The tools
 
-DirSizer is five separate executables, all built from the same underlying code, plus the experimental `dirsizer-index.exe`:
+DirSizer is six separate executables, all built from the same underlying code:
 
 | Tool | What it is for | Notes |
 | --- | --- | --- |
@@ -34,7 +35,7 @@ DirSizer is five separate executables, all built from the same underlying code, 
 | `dirsizer-mft.exe` | Fast folder-size scan | **Experimental.** Reads the raw `$MFT` in large blocks. About 1.4x faster than `dirsizer-fsctl` in measurements. Renamed from `dirsizer-bulk.exe`; same implementation. |
 | `dirsizer-fsctl.exe` | The same folder-size scan through `FSCTL_GET_NTFS_FILE_RECORD` | The reference implementation. Use it to cross-check `dirsizer-mft`, to benchmark, or when you want the conservative method. |
 | `dirsizer-inspect.exe` | Looking inside the NTFS `$MFT` | For investigating and developing: one record's attributes, the `$MFT` extents, slot counts, raw-vs-FSCTL comparison. Not a usage scan. |
-| `dirsizer-index.exe` | **Experimental, not in the release zip.** Repeated analysis from a saved per-volume index | Full `$MFT` scan the first time, then only the records the USN journal names. Any directory on the drive; `--changes` lists what shrank and grew since the previous run. See [docs/design_index.md](docs/design_index.md). |
+| `dirsizer-index.exe` | **Experimental.** Repeated analysis from a saved per-volume index | Full `$MFT` scan the first time, then only the records the USN journal names. Any directory on the drive; `--changes` lists what shrank and grew since the previous run. See [docs/design_index.md](docs/design_index.md). |
 
 `dirsizer-mft` and `dirsizer-fsctl` take the same options and print the same results; you choose the one you
 want, and neither ever falls back to the other. `dirsizer-fs.exe` has its own options (`--workers`,
@@ -68,7 +69,7 @@ Publish a small NativeAOT executable (this needs the Visual Studio C++ build too
 dotnet publish src\DirSizer\DirSizer.csproj -c Release -r win-x64
 ```
 
-The executable is under `artifacts\publish\DirSizer\release_win-x64\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all five (see "Releases").
+The executable is under `artifacts\publish\DirSizer\release_win-x64\`. NativeAOT removes the runtime dependency and enables trimming. `scripts\release.ps1` publishes all six (see "Releases").
 
 For a fast local compile, build the solution (`DirSizer.sln`, every tool and the developer tool) or one project. Each project builds into its own folder, `artifacts\bin\<project>\release_win-x64\`:
 
@@ -139,8 +140,8 @@ version without publishing it:
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1
 ```
 
-This creates `dist\DirSizer-v<version>-win-x64.zip` containing the five NativeAOT
-executables (dirsizer.exe, dirsizer-fs.exe, dirsizer-mft.exe, dirsizer-fsctl.exe, dirsizer-inspect.exe), this README, and the license. To create the GitHub release, install and sign in
+This creates `dist\DirSizer-v<version>-win-x64.zip` containing the six NativeAOT
+executables (dirsizer.exe, dirsizer-fs.exe, dirsizer-mft.exe, dirsizer-fsctl.exe, dirsizer-inspect.exe, dirsizer-index.exe), this README, and the license. To create the GitHub release, install and sign in
 with GitHub CLI (`gh auth login`), create a Markdown release-notes file, and
 run:
 
