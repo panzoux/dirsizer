@@ -201,7 +201,7 @@ The typical cleanup loop is: analyse → delete unwanted files → analyse again
 
 ### Next: the index in dirsizer.exe (proposal)
 
-Released as the experimental `dirsizer-index.exe` in v0.7.0. Proposal for making it part of `dirsizer.exe` (opt in per drive with `--remember`, then automatic; a new `index` strategy; `--changes`), with open decisions and validation gates: [2026-09-24-index-in-dirsizer-design.md](superpowers/specs/2026-09-24-index-in-dirsizer-design.md).
+Released as the experimental `dirsizer-index.exe` in v0.7.0. Accepted design for making it part of `dirsizer.exe` (opt in per drive with `--keep-index`, then automatic for the drive and its folders; a new `index` strategy; `--changes`; `--drop-index`): [2026-09-24-index-in-dirsizer-design.md](superpowers/specs/2026-09-24-index-in-dirsizer-design.md); implementation plan: [2026-09-24-index-in-dirsizer.md](superpowers/plans/2026-09-24-index-in-dirsizer.md).
 
 ### I6 - Candidates after the index exists (not planned)
 
