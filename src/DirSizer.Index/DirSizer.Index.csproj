@@ -14,6 +14,9 @@
     <DebugType>none</DebugType>
     <StripSymbols>true</StripSymbols>
     <OptimizationPreference>Speed</OptimizationPreference>
+    <!-- Server GC: loading or scanning a large volume allocates about a million long-lived objects; with the default
+         workstation GC, collections that promote them took about 0.5 s of a C: load (docs\design_index.md). -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
     <ApplicationManifest>..\Shared\app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>

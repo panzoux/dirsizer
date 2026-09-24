@@ -168,11 +168,13 @@ Rule: **do not infer the final state from USN events alone.** Use the journal as
 USN event → affected FRN → re-read the MFT record if needed → current state
 ```
 
-- [ ] Read the journal from the saved USN; handle journal wrap (`ERROR_JOURNAL_ENTRY_DELETED`), journal recreation (ID change), and a disabled journal by falling back to a full rescan.
-- [ ] Apply create, delete, rename/move (parent change), size change, and hard-link changes; re-read records by FRN instead of trusting event payloads.
-- [ ] Update directory totals after the changes. First recompute the whole index in memory: the result is identical to a scan by construction, and its cost gets measured. Update only the ancestor chains if that cost turns out to dominate an incremental run.
-- [ ] Verify: after a scripted set of changes on the `T:` fixture, the incrementally updated index equals a fresh full scan.
-
+- [x] Read the journal from the saved USN; handle journal wrap (`ERROR_JOURNAL_ENTRY_DELETED`), journal recreation (ID change), and a disabled journal by falling back to a full rescan. `UsnJournal`, `IndexValidity`; self-tests with synthetic journal pages; on T:, `Test-IndexIncremental.ps1` recreated and disabled the journal and damaged the index file, and each gave a full scan with the stated reason. A wrap was not forced on a real volume (only the self-test covers it).
+- [x] Apply create, delete, rename/move (parent change), size change, and hard-link changes; re-read records by FRN instead of trusting event payloads. `IndexUpdater` (FSCTL re-read, attribute lists for extension records, NTFS metadata re-read every time); `Test-IndexIncremental.ps1`: every `--verify` after real changes on T: had 0 differences, including after 5,000-6,000 new files grew `$MFT` and after they were deleted. The checks failed when metadata re-reads were disabled (record 0, `$MFT`, once the MFT grew; without that step no check failed, so the step was added) and when extension-record reads were disabled (the hard-linked file, whose `$DATA` is in an extension record).
+- [x] Aggregation after an update: the whole index is recomputed in memory (`Recompute`, 483 ms on C:), not only the ancestor chains. The result is identical to a scan by construction.
+- [ ] Only if `recompute_ms` dominates an incremental run: update the ancestor chains instead of recomputing everything. On C: it does not (480 of 2,630 ms with the delta file); loading the base file (1,508 ms) does.
+- [x] Verify: after a scripted set of changes on the `T:` fixture, the incrementally updated index equals a fresh full scan (`Test-IndexIncremental.ps1`, ALL CHECKS PASSED, 36 checks). C: timings: an incremental run takes 55 % of a full run (4,529 ms against 8,219 ms, medians of 3, `Measure-Index.ps1`, one machine, warm cache, JIT Release build).
+- [x] Decision gate before I4 (plan: incremental below 50 % of a full run): first 55 %, dominated by rewriting the whole 112 MiB file (1,914 ms). Remedy chosen by the user: write only the changed part. An incremental run now writes a delta file next to the base (the entries changed since the base, cumulative, with its own checksum, bound to the base by the base's SHA-256; a full save folds it in once it exceeds max(1,000, 5 % of the records); design_index.md "Delta file"). C:: save 7 ms, incremental 2,630 ms = **31 %** of a full run (8,418 ms). `Test-IndexIncremental.ps1` (55 checks) checks the kind of each save and reloads a delta that removes base-file records; it failed when the delta's removals were ignored on load or replaced entries were not recorded. Load then took 1,508 ms, the largest phase.
+- [x] Faster load of the base file (design_index.md "Loading fast"): server GC for `dirsizer-index` (GC pauses during the load about 500 -> 90 ms; full runs also faster; peak memory of a full run 468 -> 598 MiB), and SHA-256 computed on a second thread piece by piece while the file is read and parsed, with parsing hardened so a damaged file is still reported by its checksum (self-tests, mutation-checked: reporting the parse error first, and hashing only the first piece, each fail a test). Format unchanged. C:: load 752 ms (was 1.6-1.7 s the same day), incremental 1,939 ms = 25 % of a full run. SHA-256 is now the floor of the load; a non-cryptographic checksum would need a format version (not done).
 ### I4 - Subtree-scoped analysis
 
 Analysing `C:\Users\foo\Downloads` becomes a query on the index: resolve the path to its FRN, take its descendants, aggregate. It is not a separate scanner.
@@ -186,15 +188,16 @@ whole-volume MFT index
 
 Today a non-root path always uses the directory walk (unified-strategy spec); with an index, any subtree of an indexed volume can be answered without walking it.
 
-- [ ] Path → FRN resolution on the index; subtree totals equal to a fresh scan of that subtree (and explain differences with `dirsizer-fs.exe`, as in design_fs.md).
-- [ ] Share one index across whole-volume and subtree analyses.
+- [x] Path → FRN resolution on the index; subtree totals equal to a fresh scan of that subtree (and explain differences with `dirsizer-fs.exe`, as in design_fs.md). Windows resolves the path (`PathResolver`; a record reused with another sequence number is refused, mutation-checked); on T:, a subtree's size equals the sum of its files, `dirsizer-fs` (root and every child), and the same directory in the whole-volume listing (`Test-IndexIncremental.ps1`, ALL CHECKS PASSED). The differences with `dirsizer-fs` on trees with hard links are the ones design_fs.md already lists for the NTFS tools.
+- [x] Share one index across whole-volume and subtree analyses: one `<serial>.dsix` per volume; every query loads and updates the same file.
 
 ### I5 - Fast repeated analysis
 
 The typical cleanup loop is: analyse → delete unwanted files → analyse again. Today the second step is a full MFT scan and a full re-aggregation. With I2-I4 it becomes: previous index → USN delta → update only the changed parts → re-aggregate.
 
-- [ ] Before/after report: which directories shrank or grew, by how much, since the previous run.
-- [ ] Measure the second run against a full rescan after a realistic cleanup.
+- [x] Before/after report: which directories shrank or grew, by how much, since the previous run. `dirsizer-index --changes` (`ChangeReporter`, design_index.md "Changes since the previous run"; 5 self-tests, mutation-checked: ignoring the sequence number, dropping deleted directories, and counting a directory moved in with its old size each fail a test). On T:, deleting a 20,000-byte file showed -20,000 for the queried folder and its subfolder, `--no-save` kept the baseline for the next run, and a saved run left nothing to report (`Test-IndexIncremental.ps1`, ALL CHECKS PASSED).
+- [x] Measure the second run against a full rescan after a realistic cleanup: C:, 30,000 files (30 MiB) deleted, incremental with `--changes` 3,793 ms vs full 7,369 ms (51 %; without `--changes` 2,787 ms, 38 %); the deleted folder listed with exactly -30,720,000 bytes (medians of 3, one machine, warm cache, JIT Release build).
+- [ ] Only if `--changes` becomes the common case: its cost is about 1 s on C: (a second `Recompute` for the baseline, and a comparison that walks the whole volume for the root). Storing the directory sizes in the index would remove the first; not done.
 
 ### I6 - Candidates after the index exists (not planned)
 

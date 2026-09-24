@@ -12,11 +12,11 @@ DirSizer は MIT ライセンスの下で公開されています。詳細は [L
 
 `dirsizer.exe` が通常の入口です。パスを渡すと、そのファイルシステムに対して利用可能かつ検証済みの最良のスキャン方式を自動的に選びます。ユーザーはどの方式が動いたかを意識する必要はありません。管理者権限のある NTFS ドライブルートでは MFT（Master File Table）を直接読み、それ以外（非昇格、非 NTFS、ドライブルート以外のパス）では `FindFirstFileExW` によるディレクトリ走査になります。詳細は下の「dirsizer.exe（統合エントリポイント）」を参照してください。
 
-同じ実装は、方式をあらかじめ知っている利用者向け、または診断・ベンチマーク・開発向けに、4 つの専用実行ファイルとしても提供されています: `dirsizer-fs.exe`（任意のファイルシステム、管理者権限不要）、`dirsizer-mft.exe`（生の `$MFT`、実験的機能）、`dirsizer-fsctl.exe`（`FSCTL_GET_NTFS_FILE_RECORD`、NTFS のリファレンス実装）、`dirsizer-inspect.exe`（`$MFT` 内部の調査、サイズ集計機能なし）。NTFS 向けの 3 つのツールは NTFS ボリュームの MFT を直接読み込む設計になっており、`FindFirstFile` や `Directory.EnumerateFiles` によるパス走査、および USN ジャーナルは使用していません。
+同じ実装は、方式をあらかじめ知っている利用者向け、または診断・ベンチマーク・開発向けに、5 つの専用実行ファイルとしても提供されています: `dirsizer-fs.exe`（任意のファイルシステム、管理者権限不要）、`dirsizer-mft.exe`（生の `$MFT`、実験的機能）、`dirsizer-fsctl.exe`（`FSCTL_GET_NTFS_FILE_RECORD`、NTFS のリファレンス実装）、`dirsizer-inspect.exe`（`$MFT` 内部の調査、サイズ集計機能なし）、`dirsizer-index.exe`（実験的機能: ボリュームごとに保存したインデックスを USN ジャーナルで最新に保ち、繰り返し分析に使う）。NTFS 向けの 3 つのスキャナーは NTFS ボリュームの MFT を直接読み込む設計になっており、`FindFirstFile` や `Directory.EnumerateFiles` によるパス走査、および USN ジャーナルは使用していません。
 
 ## 構成ツール
 
-DirSizer は、同じ実装から構築された 5 つの独立した実行ファイルで構成されています。
+DirSizer は、同じ実装から構築された 6 つの独立した実行ファイルで構成されています。
 
 | ツール | 用途 | 備考 |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ DirSizer は、同じ実装から構築された 5 つの独立した実行フ�
 | `dirsizer-mft.exe` | 高速フォルダーサイズスキャン | **【実験的機能】** `$MFT` を大容量ブロック単位で直接読み込みます。検証環境では `dirsizer-fsctl` より約 1.4 倍高速に動作しました。`dirsizer-bulk.exe` から改称（実装は同一）。 |
 | `dirsizer-fsctl.exe` | 同上のフォルダーサイズスキャン | `FSCTL_GET_NTFS_FILE_RECORD` を使用するリファレンス実装です。`dirsizer-mft` の動作検証、ベンチマーク、または安全性を重視する環境で使用します。 |
 | `dirsizer-inspect.exe` | NTFS `$MFT` 内部構造の解析 | 開発・調査用ツール。単一レコードの属性解析、`$MFT` エクステント、スロット数の確認、Raw 読み込みと FSCTL の比較などを行います（サイズ集計機能はありません）。 |
+| `dirsizer-index.exe` | **【実験的機能】** ボリュームごとに保存したインデックスによる繰り返し分析 | 初回は `$MFT` 全体をスキャンし、以降は USN ジャーナルに記録されたレコードだけを読み直します。ドライブ上の任意のディレクトリを指定できます。`--changes` で前回の実行から縮小・増加したディレクトリを一覧表示します。[docs/design_index.md](docs/design_index.md)（英語）を参照してください。 |
 
 `dirsizer-mft` と `dirsizer-fsctl` は同じコマンドラインオプションを受け付け、同一の結果を出力します。`dirsizer-fs.exe` は独自のオプション（`--workers`、`--strict`、`--enumerator`）を持ちます。`dirsizer.exe` はどのツールよりも小さいオプション集合です（実装方式を指定するオプションはありません）。詳細なオプションは各コマンドの `--help` で確認できます（`dirsizer-inspect --help` が最も詳細です）。
 
@@ -50,6 +51,7 @@ Windows の仕様上、非昇格コンソールから昇格が必要なプロセ
 | `src\DirSizer.Bulk\DirSizer.Bulk.csproj` | `dirsizer-mft` |
 | `src\DirSizer.Fsctl\DirSizer.Fsctl.csproj` | `dirsizer-fsctl` |
 | `src\DirSizer.Inspect\DirSizer.Inspect.csproj` | `dirsizer-inspect` |
+| `src\DirSizer.Index\DirSizer.Index.csproj` | `dirsizer-index`（実験的機能） |
 
 依存関係のない単一の NativeAOT 実行ファイルを生成する場合（要 Visual Studio C++ ビルドツール）:
 
@@ -133,7 +135,7 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1
 
 ```
 
-`dist\DirSizer-v<version>-win-x64.zip` が生成され、5 つの NativeAOT 実行ファイル（dirsizer.exe、dirsizer-fs.exe、dirsizer-mft.exe、dirsizer-fsctl.exe、dirsizer-inspect.exe）、README、ライセンスが同梱されます。GitHub CLI（`gh`）を使用して GitHub Release へ自動公開を行う場合は、事前にサインイン（`gh auth login`）を完了させた上で以下を実行します:
+`dist\DirSizer-v<version>-win-x64.zip` が生成され、6 つの NativeAOT 実行ファイル（dirsizer.exe、dirsizer-fs.exe、dirsizer-mft.exe、dirsizer-fsctl.exe、dirsizer-inspect.exe、dirsizer-index.exe）、README、ライセンスが同梱されます。GitHub CLI（`gh`）を使用して GitHub Release へ自動公開を行う場合は、事前にサインイン（`gh auth login`）を完了させた上で以下を実行します:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 `
