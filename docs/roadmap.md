@@ -199,6 +199,10 @@ The typical cleanup loop is: analyse → delete unwanted files → analyse again
 - [x] Measure the second run against a full rescan after a realistic cleanup: C:, 30,000 files (30 MiB) deleted, incremental with `--changes` 3,793 ms vs full 7,369 ms (51 %; without `--changes` 2,787 ms, 38 %); the deleted folder listed with exactly -30,720,000 bytes (medians of 3, one machine, warm cache, JIT Release build).
 - [ ] Only if `--changes` becomes the common case: its cost is about 1 s on C: (a second `Recompute` for the baseline, and a comparison that walks the whole volume for the root). Storing the directory sizes in the index would remove the first; not done.
 
+### Next: the index in dirsizer.exe (proposal)
+
+Released as the experimental `dirsizer-index.exe` in v0.7.0. Proposal for making it part of `dirsizer.exe` (opt in per drive with `--remember`, then automatic; a new `index` strategy; `--changes`), with open decisions and validation gates: [2026-09-24-index-in-dirsizer-design.md](superpowers/specs/2026-09-24-index-in-dirsizer-design.md).
+
 ### I6 - Candidates after the index exists (not planned)
 
 Not planned work. Re-evaluate only after I2-I3 are complete and verified. The same index could serve:
