@@ -146,6 +146,7 @@ static class RecordComparison
             var leftEntries = new List<string>();
             var rightEntries = new List<string>();
             var interesting = false;
+            var same = true;
             for (var entry = 0; entry < count; entry++)
             {
                 var position = offset + 2 + entry * 2;
@@ -154,10 +155,11 @@ static class RecordComparison
                 leftEntries.Add($"{leftValue:X4}");
                 rightEntries.Add($"{rightValue:X4}");
                 if (leftValue != 0 || rightValue != 0) interesting = true;
+                if (leftValue != rightValue) same = false;
             }
             if (!interesting) continue;
             var tails = $"tail510={BinaryPrimitives.ReadUInt16LittleEndian(left.AsSpan(510)):X4}/{BinaryPrimitives.ReadUInt16LittleEndian(other.AsSpan(510)):X4} tail1022={BinaryPrimitives.ReadUInt16LittleEndian(left.AsSpan(1022)):X4}/{BinaryPrimitives.ReadUInt16LittleEndian(other.AsSpan(1022)):X4}";
-            Console.WriteLine($"usa record={number} ext={(BinaryPrimitives.ReadUInt64LittleEndian(left.AsSpan(32)) != 0 ? "y" : "n")} flags=0x{BinaryPrimitives.ReadUInt16LittleEndian(left.AsSpan(22)):X4} used={used} bulk=[{string.Join(",", leftEntries)}] fsctl=[{string.Join(",", rightEntries)}] {tails} {(leftEntries.SequenceEqual(rightEntries) ? "same" : "DIFF")}");
+            Console.WriteLine($"usa record={number} ext={(BinaryPrimitives.ReadUInt64LittleEndian(left.AsSpan(32)) != 0 ? "y" : "n")} flags=0x{BinaryPrimitives.ReadUInt16LittleEndian(left.AsSpan(22)):X4} used={used} bulk=[{string.Join(",", leftEntries)}] fsctl=[{string.Join(",", rightEntries)}] {tails} {(same ? "same" : "DIFF")}");
         }
     }
 

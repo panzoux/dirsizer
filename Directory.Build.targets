@@ -1,0 +1,7 @@
+<Project>
+  <!-- No LINQ (roadmap P1). ImplicitUsings imports System.Linq into every file, so a LINQ call would compile silently;
+       removing it here (targets, after the SDK has added its implicit usings) makes any LINQ extension method a build error. -->
+  <ItemGroup>
+    <Using Remove="System.Linq" />
+  </ItemGroup>
+</Project>
